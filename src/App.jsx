@@ -203,8 +203,8 @@ const bgm = new GameBGM();
 export default function App() {
   const [screen, setScreen] = useState("join"); // join | floor | input | duel
   const [studyCategory, setStudyCategory] = useState(null);
-  const [studyStep, setStudyStep] = useState(1); // 1=flashcard, 2=cloze, 3=picture
-  const [stepProgress, setStepProgress] = useState({}); // { animals: 3, food: 1 }
+  const [studyStep, setStudyStep] = useState(1); // 1-6
+  const [stepProgress, setStepProgress] = useState({}); // { animals: 6, food: 1 }
   // Step 1: Flashcard
   const [studyRevealed, setStudyRevealed] = useState(false);
   const [studyDeck, setStudyDeck] = useState([]);
@@ -218,7 +218,13 @@ export default function App() {
   const [quizQueue, setQuizQueue] = useState([]);
   const [quizChoices, setQuizChoices] = useState([]);
   const [quizFeedback, setQuizFeedback] = useState(null);
-  const [quizMode, setQuizMode] = useState(null); // "pic2word" | "word2pic"
+  const [quizMode, setQuizMode] = useState(null);
+  // Step 4-6: Sound Track
+  const [soundQueue, setSoundQueue] = useState([]);
+  const [soundChoices, setSoundChoices] = useState([]);
+  const [soundFeedback, setSoundFeedback] = useState(null);
+  const [spellInput, setSpellInput] = useState("");
+  const [spellHint, setSpellHint] = useState("");
   const [myId, setMyId] = useState(null);
   const [myName, setMyName] = useState("");
   const [roomCode, setRoomCode] = useState("");
@@ -357,6 +363,18 @@ export default function App() {
       setQuizMode(mode);
       setQuizFeedback(null);
       setupQuizChoices(items[0], cat, mode);
+    } else if (step === 4 || step === 5) {
+      // B-1: Sound→Meaning (4択 画像/意味), B-2: Meaning→Sound (4つの音声ボタン)
+      setSoundQueue(items);
+      setSoundFeedback(null);
+      const others = QDB[cat].filter(x => x.answer !== items[0].answer);
+      setSoundChoices(shuffle([items[0], ...shuffle(others).slice(0, 3)]));
+    } else if (step === 6) {
+      // B-3: Sound→Spelling
+      setSoundQueue(items);
+      setSoundFeedback(null);
+      setSpellInput("");
+      setSpellHint(items[0].answer[0]);
     }
   };
 
@@ -371,7 +389,7 @@ export default function App() {
   const completeStep = (cat, step) => {
     setStepProgress(prev => ({ ...prev, [cat]: Math.max(prev[cat] || 0, step) }));
     try { socket.send(JSON.stringify({ type: "step_complete", category: cat, step })); } catch {}
-    if (step < 3) {
+    if (step < 6) {
       startStep(cat, step + 1);
     } else {
       setStudyCategory(null);
@@ -380,7 +398,7 @@ export default function App() {
 
   const enterCategory = (cat) => {
     const done = stepProgress[cat] || 0;
-    startStep(cat, Math.min(done + 1, 3));
+    startStep(cat, Math.min(done + 1, 6));
   };
 
   // ── Challenge a tile ─────────────────────────────────────────────
@@ -901,7 +919,7 @@ export default function App() {
         const p = progress[s.id] || {};
         return sum + Object.values(p).reduce((a, b) => a + b, 0);
       }, 0);
-      const totalPossible = students.length * catKeys.length * 3;
+      const totalPossible = students.length * catKeys.length * 6;
       return (
         <div style={styles.page}>
           {notification && <div style={styles.notif}>{notification}</div>}
@@ -942,7 +960,7 @@ export default function App() {
                         <div key={key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                           <span style={{ fontSize: "0.55rem", color: cat.color }}>{cat.icon}</span>
                           <div style={{ display: "flex", gap: 1 }}>
-                            {[1, 2, 3].map(i => (
+                            {[1, 2, 3, 4, 5, 6].map(i => (
                               <div key={i} style={{
                                 width: 6, height: 6, borderRadius: "50%",
                                 background: i <= step ? cat.color : "rgba(255,255,255,0.1)",
@@ -999,7 +1017,7 @@ export default function App() {
                   style={{
                     padding: "16px 10px", borderRadius: 14,
                     background: done >= 3 ? `${cat.color}18` : "rgba(255,255,255,0.04)",
-                    border: `2px solid ${done >= 3 ? cat.color + "70" : cat.color + "30"}`,
+                    border: `2px solid ${done >= 6 ? cat.color + "70" : cat.color + "30"}`,
                     cursor: "pointer", display: "flex", flexDirection: "column",
                     alignItems: "center", gap: 6, position: "relative",
                     fontFamily: "inherit",
@@ -1010,7 +1028,7 @@ export default function App() {
                     {cat.label}
                   </span>
                   <div style={{ display: "flex", gap: 3 }}>
-                    {[1, 2, 3].map(i => (
+                    {[1, 2, 3, 4, 5, 6].map(i => (
                       <div key={i} style={{
                         width: 8, height: 8, borderRadius: "50%",
                         background: i <= done ? cat.color : "rgba(255,255,255,0.15)",
@@ -1026,7 +1044,7 @@ export default function App() {
           </div>
 
           <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.7rem", marginTop: 16 }}>
-            Step 1: Flashcard / Step 2: Cloze / Step 3: Picture Quiz
+            6 steps: Flashcard → Cloze → Picture → Sound → Meaning → Spelling
           </p>
         </div>
       );
@@ -1034,7 +1052,7 @@ export default function App() {
 
     // ── Step header (shared) ──
     const catInfo = CATS[studyCategory];
-    const stepLabels = { 1: "Flashcard", 2: "Cloze", 3: "Picture Quiz" };
+    const stepLabels = { 1: "Flashcard", 2: "Cloze", 3: "Picture Quiz", 4: "Sound→Meaning", 5: "Meaning→Sound", 6: "Sound→Spelling" };
 
     const stepHeader = (
       <div style={{ textAlign: "center", marginBottom: 12, width: "100%" }}>
@@ -1051,7 +1069,7 @@ export default function App() {
           {catInfo.icon} {catInfo.label} — Step {studyStep}: {stepLabels[studyStep]}
         </div>
         <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 8 }}>
-          {[1, 2, 3].map(i => (
+          {[1, 2, 3, 4, 5, 6].map(i => (
             <div key={i} style={{
               width: 24, height: 4, borderRadius: 2,
               background: i <= studyStep ? catInfo.color : "rgba(255,255,255,0.12)",
@@ -1262,13 +1280,10 @@ export default function App() {
         return (
           <div style={{ ...styles.page, justifyContent: "center" }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🏆</div>
-              <div style={{ ...styles.title, fontSize: "1.5rem" }}>All Steps Complete!</div>
-              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.8rem", margin: "10px 0 20px" }}>
-                {catInfo.icon} {catInfo.label} — Ready for Duel!
-              </p>
-              <button style={styles.btn} onClick={() => completeStep(studyCategory, 3)}>
-                Choose another category
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🎉</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>Step 3 Complete!</div>
+              <button style={{ ...styles.btn, marginTop: 20 }} onClick={() => completeStep(studyCategory, 3)}>
+                Next: Sound → Meaning
               </button>
             </div>
           </div>
@@ -1378,6 +1393,291 @@ export default function App() {
               </div>
             </>
           )}
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 4: B-1 Sound → Meaning (音声を聞いて画像/意味を選ぶ)
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 4) {
+      const current = soundQueue[0];
+      if (!current) {
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🎉</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>Step 4 Complete!</div>
+              <button style={{ ...styles.btn, marginTop: 20 }} onClick={() => completeStep(studyCategory, 4)}>
+                Next: Meaning → Sound
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {soundQueue.length} remaining
+          </p>
+
+          {/* Play sound button */}
+          <button onClick={() => speakWord(current.answer)} style={{
+            width: 80, height: 80, borderRadius: "50%", marginBottom: 16,
+            background: `radial-gradient(circle, ${catInfo.color}, ${catInfo.color}cc)`,
+            border: `3px solid ${catInfo.color}`, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "2rem", boxShadow: `0 0 20px ${catInfo.color}40`,
+          }}>
+            🔊
+          </button>
+          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", marginBottom: 20 }}>
+            Listen and choose the correct image
+          </p>
+
+          {/* 4 image choices */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+            {soundChoices.map(choice => {
+              const isCorrect = choice.answer === current.answer;
+              const showGreen = soundFeedback && isCorrect;
+              const showRed = soundFeedback === choice.answer && !isCorrect;
+              return (
+                <div key={choice.answer}
+                  onClick={() => {
+                    if (soundFeedback) return;
+                    setSoundFeedback(choice.answer);
+                    setTimeout(() => {
+                      if (isCorrect) {
+                        const next = soundQueue.slice(1);
+                        setSoundQueue(next);
+                        if (next.length > 0) {
+                          const others = QDB[studyCategory].filter(x => x.answer !== next[0].answer);
+                          setSoundChoices(shuffle([next[0], ...shuffle(others).slice(0, 3)]));
+                        }
+                      } else {
+                        const requeued = [...soundQueue.slice(1), soundQueue[0]];
+                        setSoundQueue(requeued);
+                        const others = QDB[studyCategory].filter(x => x.answer !== requeued[0].answer);
+                        setSoundChoices(shuffle([requeued[0], ...shuffle(others).slice(0, 3)]));
+                      }
+                      setSoundFeedback(null);
+                    }, 800);
+                  }}
+                  style={{
+                    borderRadius: 14, overflow: "hidden", cursor: "pointer",
+                    border: `3px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.1)"}`,
+                    transform: showGreen ? "scale(1.05)" : showRed ? "scale(0.95)" : "scale(1)",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  <img src={choice.img} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 5: B-2 Meaning → Sound (画像を見て正しい発音を選ぶ)
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 5) {
+      const current = soundQueue[0];
+      if (!current) {
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🎉</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>Step 5 Complete!</div>
+              <button style={{ ...styles.btn, marginTop: 20 }} onClick={() => completeStep(studyCategory, 5)}>
+                Next: Sound → Spelling
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {soundQueue.length} remaining
+          </p>
+
+          {/* Show image + meaning */}
+          <img src={current.img} alt="" style={{
+            width: "clamp(120px, 35vw, 160px)", height: "clamp(120px, 35vw, 160px)",
+            objectFit: "cover", borderRadius: 16, marginBottom: 6,
+          }} />
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", marginBottom: 16 }}>
+            {current.meaning}
+          </p>
+          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", marginBottom: 12 }}>
+            Listen to each and choose the correct pronunciation
+          </p>
+
+          {/* 4 sound buttons */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+            {soundChoices.map(choice => {
+              const isCorrect = choice.answer === current.answer;
+              const showGreen = soundFeedback && isCorrect;
+              const showRed = soundFeedback === choice.answer && !isCorrect;
+              return (
+                <button key={choice.answer}
+                  onClick={() => {
+                    speakWord(choice.answer);
+                    if (soundFeedback) return;
+                    setSoundFeedback(choice.answer);
+                    setTimeout(() => {
+                      if (isCorrect) {
+                        const next = soundQueue.slice(1);
+                        setSoundQueue(next);
+                        if (next.length > 0) {
+                          const others = QDB[studyCategory].filter(x => x.answer !== next[0].answer);
+                          setSoundChoices(shuffle([next[0], ...shuffle(others).slice(0, 3)]));
+                        }
+                      } else {
+                        const requeued = [...soundQueue.slice(1), soundQueue[0]];
+                        setSoundQueue(requeued);
+                        const others = QDB[studyCategory].filter(x => x.answer !== requeued[0].answer);
+                        setSoundChoices(shuffle([requeued[0], ...shuffle(others).slice(0, 3)]));
+                      }
+                      setSoundFeedback(null);
+                    }, 1200);
+                  }}
+                  style={{
+                    padding: "16px 8px", borderRadius: 12,
+                    background: showGreen ? "rgba(46,213,115,0.2)" : showRed ? "rgba(255,71,87,0.2)" : "rgba(255,255,255,0.06)",
+                    border: `2px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.15)"}`,
+                    color: showGreen ? "#2ed573" : showRed ? "#ff4757" : "white",
+                    fontSize: "1.6rem", cursor: "pointer", fontFamily: "inherit",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  🔊 {showGreen || showRed ? choice.answer : `#${soundChoices.indexOf(choice) + 1}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 6: B-3 Sound → Spelling (音声を聞いてスペルを入力)
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 6) {
+      const current = soundQueue[0];
+      if (!current) {
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🏆</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>All 6 Steps Complete!</div>
+              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.8rem", margin: "10px 0 20px" }}>
+                {catInfo.icon} {catInfo.label} — Mastered!
+              </p>
+              <button style={styles.btn} onClick={() => completeStep(studyCategory, 6)}>
+                Choose another category
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {soundQueue.length} remaining
+          </p>
+
+          {/* Play sound */}
+          <button onClick={() => speakWord(current.answer)} style={{
+            width: 80, height: 80, borderRadius: "50%", marginBottom: 12,
+            background: `radial-gradient(circle, ${catInfo.color}, ${catInfo.color}cc)`,
+            border: `3px solid ${catInfo.color}`, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "2rem", boxShadow: `0 0 20px ${catInfo.color}40`,
+          }}>
+            🔊
+          </button>
+          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", marginBottom: 6 }}>
+            Listen and type the word
+          </p>
+
+          {/* Hint */}
+          <p style={{ color: catInfo.color, fontSize: "0.8rem", fontWeight: 600, marginBottom: 12 }}>
+            Hint: {spellHint}{"_".repeat(Math.max(0, current.answer.length - spellHint.length))}
+          </p>
+
+          {/* Text input */}
+          <input
+            value={spellInput}
+            onChange={e => setSpellInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key !== "Enter") return;
+              const correct = spellInput.toLowerCase().trim() === current.answer.toLowerCase();
+              setSoundFeedback(correct ? "correct" : "wrong");
+              if (correct) speakWord(current.answer);
+              setTimeout(() => {
+                if (correct) {
+                  const next = soundQueue.slice(1);
+                  setSoundQueue(next);
+                  if (next.length > 0) {
+                    setSpellHint(next[0].answer[0]);
+                  }
+                } else {
+                  // Show more hint letters and requeue
+                  const nextHintLen = Math.min(spellHint.length + 1, current.answer.length - 1);
+                  setSpellHint(current.answer.slice(0, nextHintLen));
+                  const requeued = [...soundQueue.slice(1), soundQueue[0]];
+                  setSoundQueue(requeued);
+                  if (requeued[0].answer !== current.answer) {
+                    setSpellHint(requeued[0].answer[0]);
+                  }
+                }
+                setSpellInput("");
+                setSoundFeedback(null);
+              }, 1000);
+            }}
+            placeholder="Type the word..."
+            autoComplete="off" spellCheck={false}
+            style={{
+              ...styles.ansInput, maxWidth: 280, padding: "12px 18px", fontSize: "1.1rem", marginBottom: 10,
+              background: soundFeedback === "correct" ? "rgba(46,213,115,0.1)" : soundFeedback === "wrong" ? "rgba(255,71,87,0.1)" : "rgba(255,255,255,0.07)",
+              border: `2px solid ${soundFeedback === "correct" ? "#2ed573" : soundFeedback === "wrong" ? "#ff4757" : "rgba(255,255,255,0.18)"}`,
+            }}
+          />
+          <button style={styles.btn} onClick={() => {
+            if (soundFeedback) return;
+            const correct = spellInput.toLowerCase().trim() === current.answer.toLowerCase();
+            setSoundFeedback(correct ? "correct" : "wrong");
+            if (correct) speakWord(current.answer);
+            setTimeout(() => {
+              if (correct) {
+                const next = soundQueue.slice(1);
+                setSoundQueue(next);
+                if (next.length > 0) setSpellHint(next[0].answer[0]);
+              } else {
+                const nextHintLen = Math.min(spellHint.length + 1, current.answer.length - 1);
+                setSpellHint(current.answer.slice(0, nextHintLen));
+                const requeued = [...soundQueue.slice(1), soundQueue[0]];
+                setSoundQueue(requeued);
+                if (requeued[0].answer !== current.answer) setSpellHint(requeued[0].answer[0]);
+              }
+              setSpellInput("");
+              setSoundFeedback(null);
+            }, 1000);
+          }}>
+            CHECK
+          </button>
+
+          {soundFeedback === "correct" && <p style={{ color: "#2ed573", fontSize: "0.85rem", fontWeight: 700, marginTop: 8 }}>Correct!</p>}
+          {soundFeedback === "wrong" && <p style={{ color: "#ff4757", fontSize: "0.85rem", fontWeight: 700, marginTop: 8 }}>Try again — more hint added!</p>}
         </div>
       );
     }
