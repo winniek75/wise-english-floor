@@ -255,6 +255,9 @@ export default function App() {
   const [quizChoices, setQuizChoices] = useState([]);
   const [quizFeedback, setQuizFeedback] = useState(null);
   const [quizMode, setQuizMode] = useState(null);
+  // Classroom duel
+  const [classroomDuel, setClassroomDuel] = useState(null); // { p1, p2, category, questions, qIdx, active, p1Time, p2Time }
+  const [duelSetup, setDuelSetup] = useState(null); // { p1: "", p2: "", category: "" } or null
   // Step 4-6: Sound Track
   const [soundQueue, setSoundQueue] = useState([]);
   const [soundChoices, setSoundChoices] = useState([]);
@@ -1083,6 +1086,16 @@ export default function App() {
             6 steps: Flashcard → Cloze → Picture → Sound → Meaning → Spelling
           </p>
 
+          {/* DUEL button */}
+          <button onClick={() => setDuelSetup({ p1: "", p2: "", category: catKeys[0] })}
+            style={{
+              ...styles.btn, marginTop: 20, maxWidth: 500, padding: "18px 20px",
+              background: "linear-gradient(135deg, #ff4757, #ff6b81)",
+              fontSize: "clamp(1rem, 2.5vw, 1.3rem)",
+            }}>
+            DUEL
+          </button>
+
           {/* Skip mode for advanced students */}
           <button onClick={() => {
             const all = {};
@@ -1098,6 +1111,66 @@ export default function App() {
           }}>
             SKIP ALL (advanced)
           </button>
+        </div>
+      );
+    }
+
+    // ── Duel setup screen ──
+    if (duelSetup) {
+      return (
+        <div style={styles.page}>
+          <button onClick={() => setDuelSetup(null)}
+            style={{ ...styles.passBtn, position: "fixed", top: 12, left: 12, padding: "6px 12px", fontSize: "0.65rem", zIndex: 999 }}>
+            Back
+          </button>
+          <div style={{ ...styles.title, fontSize: "clamp(1.4rem, 5vw, 2rem)", marginBottom: 20 }}>DUEL SETUP</div>
+          <div style={{ ...styles.card, gap: 14, maxWidth: 500 }}>
+            <label style={styles.label}>PLAYER 1</label>
+            <input style={styles.input} placeholder="Name" value={duelSetup.p1}
+              onChange={e => setDuelSetup(prev => ({ ...prev, p1: e.target.value }))} />
+            <label style={styles.label}>PLAYER 2</label>
+            <input style={styles.input} placeholder="Name" value={duelSetup.p2}
+              onChange={e => setDuelSetup(prev => ({ ...prev, p2: e.target.value }))} />
+            <label style={styles.label}>CATEGORY</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {catKeys.map(key => {
+                const cat = CATS[key];
+                const selected = duelSetup.category === key;
+                return (
+                  <button key={key} onClick={() => setDuelSetup(prev => ({ ...prev, category: key }))}
+                    style={{
+                      padding: "8px 14px", borderRadius: 10, cursor: "pointer",
+                      background: selected ? `${cat.color}30` : "rgba(255,255,255,0.04)",
+                      border: `2px solid ${selected ? cat.color : "rgba(255,255,255,0.1)"}`,
+                      color: selected ? cat.color : "rgba(255,255,255,0.4)",
+                      fontSize: "0.8rem", fontWeight: 600, fontFamily: "inherit",
+                    }}>
+                    {cat.icon} {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              disabled={!duelSetup.p1.trim() || !duelSetup.p2.trim()}
+              onClick={() => {
+                const cat = duelSetup.category;
+                const questions = shuffle([...QDB[cat]]);
+                setClassroomDuel({
+                  p1: duelSetup.p1.trim(), p2: duelSetup.p2.trim(),
+                  category: cat, questions, qIdx: 0,
+                  active: 1, p1Time: 450, p2Time: 450, ended: false, winner: null,
+                });
+                setDuelSetup(null);
+                setScreen("classroom-duel");
+              }}
+              style={{
+                ...styles.btn, padding: "16px",
+                background: "linear-gradient(135deg, #ff4757, #ff6b81)",
+                opacity: (!duelSetup.p1.trim() || !duelSetup.p2.trim()) ? 0.4 : 1,
+              }}>
+              START DUEL
+            </button>
+          </div>
         </div>
       );
     }
@@ -1128,10 +1201,16 @@ export default function App() {
             }} />
           ))}
         </div>
-        <button onClick={() => completeStep(studyCategory, studyStep)}
-          style={{ marginTop: 6, background: "none", border: "none", color: "rgba(255,255,255,0.25)", fontSize: "0.6rem", cursor: "pointer", fontFamily: "inherit" }}>
-          skip this step
-        </button>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 6 }}>
+          <button onClick={() => completeStep(studyCategory, studyStep)}
+            style={{ background: "none", border: "none", color: "rgba(255,255,255,0.25)", fontSize: "0.6rem", cursor: "pointer", fontFamily: "inherit" }}>
+            skip this step
+          </button>
+          <button onClick={() => { setStudyCategory(null); setDuelSetup({ p1: "", p2: "", category: studyCategory }); }}
+            style={{ background: "none", border: "none", color: "#ff475780", fontSize: "0.6rem", cursor: "pointer", fontFamily: "inherit" }}>
+            go to duel
+          </button>
+        </div>
       </div>
     );
 
@@ -1808,7 +1887,177 @@ export default function App() {
     }
   }
 
-  // ── DUEL ──────────────────────────────────────────────────────────
+  // ── CLASSROOM DUEL (teacher-only, no server needed) ─────────────
+  if (screen === "classroom-duel" && classroomDuel) {
+    const d = classroomDuel;
+    const q = d.questions[d.qIdx % d.questions.length];
+    const catInfo = CATS[d.category];
+    const activeIsP1 = d.active === 1;
+
+    // Timer effect
+    useEffect(() => {
+      if (d.ended) return;
+      const timer = setInterval(() => {
+        setClassroomDuel(prev => {
+          if (!prev || prev.ended) return prev;
+          if (prev.active === 1) {
+            const next = prev.p1Time - 1;
+            if (next <= 0) return { ...prev, p1Time: 0, ended: true, winner: prev.p2 };
+            return { ...prev, p1Time: next };
+          } else {
+            const next = prev.p2Time - 1;
+            if (next <= 0) return { ...prev, p2Time: 0, ended: true, winner: prev.p1 };
+            return { ...prev, p2Time: next };
+          }
+        });
+      }, 100);
+      return () => clearInterval(timer);
+    }, [d.active, d.ended]);
+
+    // Teacher taps = correct, switch turn
+    const handleDuelTap = () => {
+      if (d.ended) return;
+      playSFX("correct");
+      setClassroomDuel(prev => ({
+        ...prev,
+        active: prev.active === 1 ? 2 : 1,
+        qIdx: prev.qIdx + 1,
+      }));
+    };
+
+    if (d.ended) {
+      return (
+        <div style={styles.tvPage}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "5rem", marginBottom: 10 }}>🏆</div>
+              <div style={{ ...styles.title, fontSize: "clamp(2rem, 6vw, 3rem)" }}>
+                {d.winner} WINS!
+              </div>
+              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "1rem", margin: "16px 0" }}>
+                {d.p1} {fmtTime(d.p1Time)} — {d.p2} {fmtTime(d.p2Time)}
+              </p>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 20 }}>
+                <button style={styles.btn} onClick={() => {
+                  // Rematch
+                  const questions = shuffle([...QDB[d.category]]);
+                  setClassroomDuel({
+                    p1: d.p1, p2: d.p2, category: d.category,
+                    questions, qIdx: 0, active: 1, p1Time: 450, p2Time: 450, ended: false, winner: null,
+                  });
+                }}>
+                  REMATCH
+                </button>
+                <button style={styles.passBtn} onClick={() => { setClassroomDuel(null); setScreen("input"); }}>
+                  BACK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={styles.tvPage}>
+        {/* Tap the question area to switch turn */}
+        <div onClick={handleDuelTap} style={{
+          flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+          width: "100%", cursor: "pointer", userSelect: "none", WebkitTapHighlightColor: "transparent",
+        }}>
+          <div style={{
+            width: "min(85vw, 550px)", height: "min(60vh, 440px)",
+            background: "linear-gradient(180deg, #fffbe6 0%, #fff3c4 100%)",
+            borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 8px 40px rgba(0,0,0,0.4), inset 0 0 80px rgba(255,255,255,0.3)",
+            border: "3px solid rgba(255,255,255,0.2)", position: "relative",
+          }}>
+            <img src={q.img} alt="" style={{ maxWidth: "80%", maxHeight: "80%", objectFit: "contain", borderRadius: 16 }} />
+            <div style={{
+              position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
+              padding: "4px 14px", borderRadius: 12,
+              background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
+              fontSize: "0.75rem", color: "rgba(255,255,255,0.7)", whiteSpace: "nowrap",
+            }}>
+              Tap = correct, switch turn
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom bar — THE FLOOR style */}
+        <div style={{ width: "100%", display: "flex", alignItems: "stretch", height: 90, position: "relative" }}>
+          {/* P1 */}
+          <div style={{
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px",
+            background: activeIsP1 ? "linear-gradient(90deg, #00d4ff50, #00d4ff20)" : "rgba(255,255,255,0.04)",
+            borderTop: "3px solid #00d4ff", transition: "background 0.3s",
+          }}>
+            <div>
+              <div style={{
+                fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.08em",
+                color: activeIsP1 ? "#00d4ff" : "rgba(255,255,255,0.3)",
+                animation: activeIsP1 ? "blink 1.1s ease-in-out infinite" : "none",
+              }}>
+                {activeIsP1 ? "ANSWERING" : "WAITING"}
+              </div>
+              <div style={{ fontSize: "clamp(1rem, 2.5vw, 1.3rem)", fontWeight: 700, color: "#00d4ff" }}>
+                {d.p1}
+              </div>
+            </div>
+            <div style={{
+              fontFamily: "monospace", fontSize: "clamp(1.8rem, 5vw, 2.8rem)", fontWeight: 700,
+              color: d.p1Time < 100 ? "#ff4757" : "#00d4ff",
+            }}>
+              {fmtTime(d.p1Time)}
+            </div>
+          </div>
+
+          {/* Category badge */}
+          <div style={{
+            position: "absolute", left: "50%", top: -18, transform: "translateX(-50%)",
+            padding: "6px 20px", borderRadius: 20,
+            background: "#0e0e30", border: `2px solid ${catInfo.color}60`,
+            fontSize: "0.7rem", fontWeight: 700, color: catInfo.color,
+            textTransform: "uppercase", letterSpacing: "0.1em", zIndex: 2,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+          }}>
+            {catInfo.icon} {catInfo.label}
+          </div>
+
+          <div style={{ width: 2, background: "rgba(255,255,255,0.15)" }} />
+
+          {/* P2 */}
+          <div style={{
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px",
+            background: !activeIsP1 ? "linear-gradient(270deg, #ff475750, #ff475720)" : "rgba(255,255,255,0.04)",
+            borderTop: "3px solid #ff4757", transition: "background 0.3s",
+          }}>
+            <div style={{
+              fontFamily: "monospace", fontSize: "clamp(1.8rem, 5vw, 2.8rem)", fontWeight: 700,
+              color: d.p2Time < 100 ? "#ff4757" : "#ff4757",
+            }}>
+              {fmtTime(d.p2Time)}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{
+                fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.08em",
+                color: !activeIsP1 ? "#ff4757" : "rgba(255,255,255,0.3)",
+                animation: !activeIsP1 ? "blink 1.1s ease-in-out infinite" : "none",
+              }}>
+                {!activeIsP1 ? "ANSWERING" : "WAITING"}
+              </div>
+              <div style={{ fontSize: "clamp(1rem, 2.5vw, 1.3rem)", fontWeight: 700, color: "#ff4757" }}>
+                {d.p2}
+              </div>
+            </div>
+          </div>
+        </div>
+        <style>{`@keyframes blink { 0%,100%{opacity:0.2} 50%{opacity:1} }`}</style>
+      </div>
+    );
+  }
+
+  // ── DUEL (online mode) ──────────────────────────────────────────────
   if (screen === "duel" && duelLocal) {
     const isMyTurn = gameState?.duel?.active === socket.id;
     const { myTime, opTime, feedback, ended, resultWon, opponent } = duelLocal;
