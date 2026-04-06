@@ -259,6 +259,8 @@ export default function App() {
   const [classroomDuel, setClassroomDuel] = useState(null); // { p1, p2, category, questions, qIdx, active, p1Time, p2Time }
   const [duelSetup, setDuelSetup] = useState(null); // { p1: "", p2: "", category: "" } or null
   // Step 4-6: Sound Track
+  const [listenPhase, setListenPhase] = useState("listen"); // Step 5: "listen" | "answer"
+  const [playedIdxs, setPlayedIdxs] = useState(new Set());  // Step 5: which buttons played
   const [soundQueue, setSoundQueue] = useState([]);
   const [soundChoices, setSoundChoices] = useState([]);
   const [soundFeedback, setSoundFeedback] = useState(null);
@@ -407,6 +409,8 @@ export default function App() {
       // B-1: Sound→Meaning (4択 画像/意味), B-2: Meaning→Sound (4つの音声ボタン)
       setSoundQueue(items);
       setSoundFeedback(null);
+      setListenPhase("listen");
+      setPlayedIdxs(new Set());
       const others = QDB[cat].filter(x => x.answer !== items[0].answer);
       setSoundChoices(shuffle([items[0], ...shuffle(others).slice(0, 3)]));
     } else if (step === 6) {
@@ -1639,10 +1643,6 @@ export default function App() {
           </div>
         );
       }
-
-      // Phase: "listen" = free listening, "answer" = pick your answer
-      const [listenPhase, setListenPhase] = useState("listen");
-      const [playedIdxs, setPlayedIdxs] = useState(new Set());
 
       const handleStep5Answer = (choice) => {
         if (soundFeedback) return;
