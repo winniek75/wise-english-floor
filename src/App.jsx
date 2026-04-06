@@ -1560,6 +1560,36 @@ export default function App() {
         );
       }
 
+      // Phase: "listen" = free listening, "answer" = pick your answer
+      const [listenPhase, setListenPhase] = useState("listen");
+      const [playedIdxs, setPlayedIdxs] = useState(new Set());
+
+      const handleStep5Answer = (choice) => {
+        if (soundFeedback) return;
+        const isCorrect = choice.answer === current.answer;
+        setSoundFeedback(choice.answer);
+        playSFX(isCorrect ? "correct" : "wrong");
+        speakWord(choice.answer);
+        setTimeout(() => {
+          if (isCorrect) {
+            const next = soundQueue.slice(1);
+            setSoundQueue(next);
+            if (next.length > 0) {
+              const others = QDB[studyCategory].filter(x => x.answer !== next[0].answer);
+              setSoundChoices(shuffle([next[0], ...shuffle(others).slice(0, 3)]));
+            }
+          } else {
+            const requeued = [...soundQueue.slice(1), soundQueue[0]];
+            setSoundQueue(requeued);
+            const others = QDB[studyCategory].filter(x => x.answer !== requeued[0].answer);
+            setSoundChoices(shuffle([requeued[0], ...shuffle(others).slice(0, 3)]));
+          }
+          setSoundFeedback(null);
+          setListenPhase("listen");
+          setPlayedIdxs(new Set());
+        }, 1200);
+      };
+
       return (
         <div style={styles.page}>
           {stepHeader}
@@ -1572,57 +1602,89 @@ export default function App() {
             width: "clamp(160px, 28vw, 260px)", height: "clamp(160px, 28vw, 260px)",
             objectFit: "cover", borderRadius: 16, marginBottom: 6,
           }} />
-          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", marginBottom: 16 }}>
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "clamp(0.85rem, 2vw, 1.1rem)", marginBottom: 12 }}>
             {current.meaning}
           </p>
-          <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem", marginBottom: 12 }}>
-            Listen to each and choose the correct pronunciation
-          </p>
 
-          {/* 4 sound buttons */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
-            {soundChoices.map(choice => {
-              const isCorrect = choice.answer === current.answer;
-              const showGreen = soundFeedback && isCorrect;
-              const showRed = soundFeedback === choice.answer && !isCorrect;
-              return (
-                <button key={choice.answer}
-                  onClick={() => {
-                    speakWord(choice.answer);
-                    if (soundFeedback) return;
-                    setSoundFeedback(choice.answer);
-                    playSFX(isCorrect ? "correct" : "wrong");
-                    setTimeout(() => {
-                      if (isCorrect) {
-                        const next = soundQueue.slice(1);
-                        setSoundQueue(next);
-                        if (next.length > 0) {
-                          const others = QDB[studyCategory].filter(x => x.answer !== next[0].answer);
-                          setSoundChoices(shuffle([next[0], ...shuffle(others).slice(0, 3)]));
-                        }
-                      } else {
-                        const requeued = [...soundQueue.slice(1), soundQueue[0]];
-                        setSoundQueue(requeued);
-                        const others = QDB[studyCategory].filter(x => x.answer !== requeued[0].answer);
-                        setSoundChoices(shuffle([requeued[0], ...shuffle(others).slice(0, 3)]));
-                      }
-                      setSoundFeedback(null);
-                    }, 1200);
-                  }}
-                  style={{
-                    padding: "16px 8px", borderRadius: 12,
-                    background: showGreen ? "rgba(46,213,115,0.2)" : showRed ? "rgba(255,71,87,0.2)" : "rgba(255,255,255,0.06)",
-                    border: `2px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.15)"}`,
-                    color: showGreen ? "#2ed573" : showRed ? "#ff4757" : "white",
-                    fontSize: "1.6rem", cursor: "pointer", fontFamily: "inherit",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  🔊 {showGreen || showRed ? choice.answer : `#${soundChoices.indexOf(choice) + 1}`}
-                </button>
-              );
-            })}
-          </div>
+          {listenPhase === "listen" ? (
+            <>
+              <p style={{ color: catInfo.color, fontSize: "0.8rem", fontWeight: 600, marginBottom: 12 }}>
+                Listen to all 4, then choose
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: "100%", maxWidth: 500, marginBottom: 16 }}>
+                {soundChoices.map((choice, idx) => (
+                  <button key={choice.answer}
+                    onClick={() => {
+                      speakWord(choice.answer);
+                      setPlayedIdxs(prev => new Set([...prev, idx]));
+                    }}
+                    style={{
+                      padding: "20px 8px", borderRadius: 12,
+                      background: playedIdxs.has(idx) ? `${catInfo.color}15` : "rgba(255,255,255,0.06)",
+                      border: `2px solid ${playedIdxs.has(idx) ? catInfo.color + "50" : "rgba(255,255,255,0.15)"}`,
+                      color: "white", fontSize: "1.8rem", cursor: "pointer",
+                      fontFamily: "inherit", transition: "all 0.15s",
+                    }}
+                  >
+                    🔊 <span style={{ fontSize: "0.8rem", opacity: 0.5 }}>#{idx + 1}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setListenPhase("answer")}
+                style={{
+                  ...styles.btn, maxWidth: 300,
+                  opacity: playedIdxs.size >= 2 ? 1 : 0.4,
+                }}
+                disabled={playedIdxs.size < 2}
+              >
+                I'm ready — choose my answer
+              </button>
+              {playedIdxs.size < 2 && (
+                <p style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.65rem", marginTop: 6 }}>
+                  Listen to at least 2 before answering
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p style={{ color: "#ffa502", fontSize: "0.8rem", fontWeight: 600, marginBottom: 12 }}>
+                Which one matches the picture? Tap to answer.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: "100%", maxWidth: 500 }}>
+                {soundChoices.map((choice, idx) => {
+                  const isCorrect = choice.answer === current.answer;
+                  const showGreen = soundFeedback && isCorrect;
+                  const showRed = soundFeedback === choice.answer && !isCorrect;
+                  return (
+                    <button key={choice.answer}
+                      onClick={() => {
+                        speakWord(choice.answer);
+                        handleStep5Answer(choice);
+                      }}
+                      disabled={!!soundFeedback}
+                      style={{
+                        padding: "20px 8px", borderRadius: 12,
+                        background: showGreen ? "rgba(46,213,115,0.25)" : showRed ? "rgba(255,71,87,0.25)" : "rgba(255,255,255,0.06)",
+                        border: `2px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "#ffa50260"}`,
+                        color: showGreen ? "#2ed573" : showRed ? "#ff4757" : "white",
+                        fontSize: "1.8rem", cursor: "pointer",
+                        fontFamily: "inherit", transition: "all 0.15s",
+                      }}
+                    >
+                      🔊 <span style={{ fontSize: "0.8rem" }}>
+                        {showGreen || showRed ? choice.answer : `#${idx + 1}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button onClick={() => setListenPhase("listen")}
+                style={{ ...styles.passBtn, marginTop: 12, fontSize: "0.7rem" }}>
+                Listen again
+              </button>
+            </>
+          )}
         </div>
       );
     }
