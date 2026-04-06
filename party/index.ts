@@ -31,7 +31,7 @@ interface GameState {
   players: Record<string, Player>;
   grid: Tile[];
   duel: Duel | null;
-  inputProgress: Record<string, string[]>; // playerId -> studied category keys
+  inputProgress: Record<string, Record<string, number>>; // playerId -> { category: highestStep }
 }
 
 const COLORS = ["#00d4ff", "#ff4757", "#ffa502", "#2ed573", "#c44dff", "#ff6b81", "#eccc68", "#1e90ff"];
@@ -120,16 +120,17 @@ export default class WiseFloorParty implements Party.Server {
         break;
       }
 
-      // Student completed studying a category
-      case "study_complete": {
+      // Student completed a learning step for a category
+      case "step_complete": {
         if (this.state.status !== "input") return;
-        const cat = data.category;
-        if (!CAT_KEYS.includes(cat)) return;
+        const { category: cat2, step } = data;
+        if (!CAT_KEYS.includes(cat2)) return;
         if (!this.state.inputProgress[sender.id]) {
-          this.state.inputProgress[sender.id] = [];
+          this.state.inputProgress[sender.id] = {};
         }
-        if (!this.state.inputProgress[sender.id].includes(cat)) {
-          this.state.inputProgress[sender.id].push(cat);
+        const current = this.state.inputProgress[sender.id][cat2] || 0;
+        if (step > current) {
+          this.state.inputProgress[sender.id][cat2] = step;
         }
         this.broadcast({ type: "state", state: this.state });
         break;

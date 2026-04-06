@@ -2,14 +2,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import usePartySocket from "partysocket/react";
 
 // ── QUESTION DATA ──────────────────────────────────────────────────
-const makeQ = (cat, name) => ({ img: `/images/${cat}/${name}.jpg`, answer: name });
+const makeQ = (cat, [name, meaning]) => ({ img: `/images/${cat}/${name}.jpg`, answer: name, meaning });
 const QDB = {
-  animals:   ["elephant","giraffe","penguin","lion","dolphin","fox","bear","eagle","crocodile","zebra"].map(n => makeQ("animals", n)),
-  food:      ["pizza","sushi","taco","avocado","noodles","steak","donut","croissant","waffle","blueberry"].map(n => makeQ("food", n)),
-  sports:    ["baseball","basketball","tennis","soccer","swimming","boxing","surfing","gymnastics","weightlifting","skiing"].map(n => makeQ("sports", n)),
-  jobs:      ["doctor","chef","firefighter","teacher","pilot","scientist","programmer","police","artist","judge"].map(n => makeQ("jobs", n)),
-  transport: ["airplane","train","ship","helicopter","scooter","bicycle","rocket","taxi","ufo","boat"].map(n => makeQ("transport", n)),
-  school:    ["pencil","microscope","backpack","books","pen","notebook","ruler","folder","computer","telescope"].map(n => makeQ("school", n)),
+  animals: [["elephant","ゾウ"],["giraffe","キリン"],["penguin","ペンギン"],["lion","ライオン"],["dolphin","イルカ"],["fox","キツネ"],["bear","クマ"],["eagle","ワシ"],["crocodile","ワニ"],["zebra","シマウマ"]].map(e => makeQ("animals", e)),
+  food: [["pizza","ピザ"],["sushi","寿司"],["taco","タコス"],["avocado","アボカド"],["noodles","麺"],["steak","ステーキ"],["donut","ドーナツ"],["croissant","クロワッサン"],["waffle","ワッフル"],["blueberry","ブルーベリー"]].map(e => makeQ("food", e)),
+  sports: [["baseball","野球"],["basketball","バスケ"],["tennis","テニス"],["soccer","サッカー"],["swimming","水泳"],["boxing","ボクシング"],["surfing","サーフィン"],["gymnastics","体操"],["weightlifting","重量挙げ"],["skiing","スキー"]].map(e => makeQ("sports", e)),
+  jobs: [["doctor","医者"],["chef","シェフ"],["firefighter","消防士"],["teacher","先生"],["pilot","パイロット"],["scientist","科学者"],["programmer","プログラマー"],["police","警察官"],["artist","アーティスト"],["judge","裁判官"]].map(e => makeQ("jobs", e)),
+  transport: [["airplane","飛行機"],["train","電車"],["ship","船"],["helicopter","ヘリコプター"],["scooter","スクーター"],["bicycle","自転車"],["rocket","ロケット"],["taxi","タクシー"],["ufo","UFO"],["boat","ボート"]].map(e => makeQ("transport", e)),
+  school: [["pencil","鉛筆"],["microscope","顕微鏡"],["backpack","リュック"],["books","本"],["pen","ペン"],["notebook","ノート"],["ruler","定規"],["folder","フォルダ"],["computer","パソコン"],["telescope","望遠鏡"]].map(e => makeQ("school", e)),
 };
 
 const CATS = {
@@ -37,6 +37,27 @@ const fmtTime = t =>
   `${Math.floor(t / 10).toString().padStart(2, "0")}.${t % 10}`;
 
 const HOST = import.meta.env.VITE_PARTYKIT_HOST || "localhost:1999";
+
+// ── TTS (Google voice preferred) ───────────────────────────────────
+let ttsVoice = null;
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  const loadVoices = () => {
+    const voices = speechSynthesis.getVoices();
+    ttsVoice = voices.find(v => v.name.includes("Google") && v.lang.startsWith("en"))
+      || voices.find(v => v.lang.startsWith("en-"));
+  };
+  speechSynthesis.onvoiceschanged = loadVoices;
+  loadVoices();
+}
+const speakWord = (word) => {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(word);
+  u.lang = "en-US";
+  u.rate = 0.85;
+  if (ttsVoice) u.voice = ttsVoice;
+  speechSynthesis.speak(u);
+};
 
 // ── Speech Recognition ─────────────────────────────────────────────
 const SpeechRecognition = typeof window !== "undefined"
@@ -182,9 +203,22 @@ const bgm = new GameBGM();
 export default function App() {
   const [screen, setScreen] = useState("join"); // join | floor | input | duel
   const [studyCategory, setStudyCategory] = useState(null);
-  const [studyIndex, setStudyIndex] = useState(0);
+  const [studyStep, setStudyStep] = useState(1); // 1=flashcard, 2=cloze, 3=picture
+  const [stepProgress, setStepProgress] = useState({}); // { animals: 3, food: 1 }
+  // Step 1: Flashcard
   const [studyRevealed, setStudyRevealed] = useState(false);
-  const [studiedCategories, setStudiedCategories] = useState([]);
+  const [studyDeck, setStudyDeck] = useState([]);
+  const [studyDone, setStudyDone] = useState([]);
+  // Step 2: Cloze
+  const [clozeQueue, setClozeQueue] = useState([]);
+  const [clozeChoices, setClozeChoices] = useState([]);
+  const [clozeFeedback, setClozeFeedback] = useState(null);
+  const [clozeInput, setClozeInput] = useState("");
+  // Step 3: Picture Quiz
+  const [quizQueue, setQuizQueue] = useState([]);
+  const [quizChoices, setQuizChoices] = useState([]);
+  const [quizFeedback, setQuizFeedback] = useState(null);
+  const [quizMode, setQuizMode] = useState(null); // "pic2word" | "word2pic"
   const [myId, setMyId] = useState(null);
   const [myName, setMyName] = useState("");
   const [roomCode, setRoomCode] = useState("");
@@ -299,6 +333,54 @@ export default function App() {
       bgm.start();
       setBgmOn(true);
     }
+  };
+
+  // ── Step helpers ─────────────────────────────────────────────────
+  const startStep = (cat, step) => {
+    setStudyCategory(cat);
+    setStudyStep(step);
+    const items = shuffle([...QDB[cat]]);
+    if (step === 1) {
+      setStudyDeck(items);
+      setStudyDone([]);
+      setStudyRevealed(false);
+    } else if (step === 2) {
+      const q = items[0];
+      const others = QDB[cat].filter(x => x.answer !== q.answer);
+      setClozeQueue(items);
+      setClozeChoices(shuffle([q, ...shuffle(others).slice(0, 3)]));
+      setClozeFeedback(null);
+      setClozeInput("");
+    } else if (step === 3) {
+      const mode = Math.random() > 0.5 ? "pic2word" : "word2pic";
+      setQuizQueue(items);
+      setQuizMode(mode);
+      setQuizFeedback(null);
+      setupQuizChoices(items[0], cat, mode);
+    }
+  };
+
+  const setupQuizChoices = (item, cat, mode) => {
+    const others = QDB[cat].filter(x => x.answer !== item.answer);
+    const distractors = shuffle(others).slice(0, 3);
+    setQuizChoices(shuffle([item, ...distractors]));
+    setQuizMode(mode);
+    setQuizFeedback(null);
+  };
+
+  const completeStep = (cat, step) => {
+    setStepProgress(prev => ({ ...prev, [cat]: Math.max(prev[cat] || 0, step) }));
+    try { socket.send(JSON.stringify({ type: "step_complete", category: cat, step })); } catch {}
+    if (step < 3) {
+      startStep(cat, step + 1);
+    } else {
+      setStudyCategory(null);
+    }
+  };
+
+  const enterCategory = (cat) => {
+    const done = stepProgress[cat] || 0;
+    startStep(cat, Math.min(done + 1, 3));
   };
 
   // ── Challenge a tile ─────────────────────────────────────────────
@@ -568,41 +650,61 @@ export default function App() {
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div style={styles.title}>WISE ENGLISH FLOOR</div>
         <p style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.8rem", letterSpacing: "0.08em" }}>
-          MULTIPLAYER VOCABULARY BATTLE
+          ENGLISH VOCABULARY BATTLE
         </p>
       </div>
-      <div style={styles.card}>
-        <label style={styles.label}>ROOM CODE</label>
-        <input
-          style={styles.input}
-          placeholder="e.g.  monday-class"
-          value={roomCode}
-          onChange={e => setRoomCode(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
-        />
-        <label style={styles.label}>YOUR NAME</label>
-        <input
-          style={styles.input}
-          placeholder="Enter your name"
-          value={myName}
-          onChange={e => setMyName(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleJoin()}
-        />
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 20 }}>
-          <input type="checkbox" id="teacher" checked={isTeacher}
-            onChange={e => setIsTeacher(e.target.checked)}
-            style={{ width: 16, height: 16, cursor: "pointer" }} />
-          <label htmlFor="teacher" style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.8rem", cursor: "pointer" }}>
-            I'm the teacher (can start the game)
-          </label>
-        </div>
-        <button style={styles.btn} onClick={handleJoin}
-          disabled={!myName.trim() || !roomCode.trim()}>
-          JOIN ROOM
+
+      {/* Classroom Mode — main button */}
+      <div style={{ ...styles.card, alignItems: "center", marginBottom: 20 }}>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.8rem", marginBottom: 16, textAlign: "center" }}>
+          Start learning on this screen. Students watch the projector.
+        </p>
+        <button style={{
+          ...styles.btn, width: "100%", padding: "16px",
+          fontSize: "1rem", background: "linear-gradient(135deg, #2ed573, #10b981)",
+        }} onClick={() => {
+          setIsTeacher(true);
+          setScreen("input");
+        }}>
+          CLASSROOM MODE
         </button>
       </div>
-      <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.7rem", marginTop: 20 }}>
-        Share the room code with students. Everyone opens this URL and enters the same code.
-      </p>
+
+      {/* Online Mode — secondary */}
+      <details style={{ width: "100%", maxWidth: 380 }}>
+        <summary style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", cursor: "pointer", marginBottom: 10 }}>
+          Online multiplayer mode
+        </summary>
+        <div style={styles.card}>
+          <label style={styles.label}>ROOM CODE</label>
+          <input
+            style={styles.input}
+            placeholder="e.g.  monday-class"
+            value={roomCode}
+            onChange={e => setRoomCode(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
+          />
+          <label style={styles.label}>YOUR NAME</label>
+          <input
+            style={styles.input}
+            placeholder="Enter your name"
+            value={myName}
+            onChange={e => setMyName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleJoin()}
+          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 20 }}>
+            <input type="checkbox" id="teacher" checked={isTeacher}
+              onChange={e => setIsTeacher(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: "pointer" }} />
+            <label htmlFor="teacher" style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.8rem", cursor: "pointer" }}>
+              I'm the teacher
+            </label>
+          </div>
+          <button style={styles.btn} onClick={handleJoin}
+            disabled={!myName.trim() || !roomCode.trim()}>
+            JOIN ROOM
+          </button>
+        </div>
+      </details>
     </div>
   );
 
@@ -793,10 +895,13 @@ export default function App() {
     const progress = gameState?.inputProgress || {};
     const catKeys = Object.keys(CATS);
 
-    // ── Teacher dashboard ──
-    if (isTeacher) {
-      const totalStudied = students.reduce((sum, s) => sum + (progress[s.id]?.length || 0), 0);
-      const totalPossible = students.length * catKeys.length;
+    // ── Teacher dashboard (only in online mode with students) ──
+    if (isTeacher && students.length > 0 && gameState?.status === "input") {
+      const totalSteps = students.reduce((sum, s) => {
+        const p = progress[s.id] || {};
+        return sum + Object.values(p).reduce((a, b) => a + b, 0);
+      }, 0);
+      const totalPossible = students.length * catKeys.length * 3;
       return (
         <div style={styles.page}>
           {notification && <div style={styles.notif}>{notification}</div>}
@@ -812,15 +917,15 @@ export default function App() {
           {/* Progress overview */}
           <div style={{ ...styles.card, marginBottom: 16, alignItems: "center" }}>
             <div style={{ fontSize: "2rem", fontWeight: 700, color: "#00d4ff", marginBottom: 4 }}>
-              {totalStudied} / {totalPossible}
+              {totalSteps} / {totalPossible}
             </div>
-            <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem" }}>categories studied</p>
+            <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem" }}>steps completed</p>
           </div>
 
           {/* Per-student progress */}
-          <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          <div style={{ width: "100%", maxWidth: 460, display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
             {students.map(s => {
-              const done = progress[s.id] || [];
+              const sp = progress[s.id] || {};
               return (
                 <div key={s.id} style={{
                   display: "flex", alignItems: "center", gap: 10,
@@ -828,25 +933,26 @@ export default function App() {
                   background: "rgba(255,255,255,0.04)", border: `1px solid ${s.color}30`,
                 }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: s.color }} />
-                  <span style={{ color: s.color, fontWeight: 600, fontSize: "0.8rem", minWidth: 60 }}>{s.name}</span>
-                  <div style={{ display: "flex", gap: 4, flex: 1 }}>
+                  <span style={{ color: s.color, fontWeight: 600, fontSize: "0.8rem", minWidth: 55 }}>{s.name}</span>
+                  <div style={{ display: "flex", gap: 6, flex: 1 }}>
                     {catKeys.map(key => {
-                      const studied = done.includes(key);
+                      const step = sp[key] || 0;
                       const cat = CATS[key];
                       return (
-                        <div key={key} style={{
-                          width: 28, height: 28, borderRadius: 6,
-                          background: studied ? `${cat.color}30` : "rgba(255,255,255,0.04)",
-                          border: `1px solid ${studied ? cat.color + "60" : "rgba(255,255,255,0.08)"}`,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: "0.7rem",
-                        }}>
-                          {studied ? cat.icon : ""}
+                        <div key={key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                          <span style={{ fontSize: "0.55rem", color: cat.color }}>{cat.icon}</span>
+                          <div style={{ display: "flex", gap: 1 }}>
+                            {[1, 2, 3].map(i => (
+                              <div key={i} style={{
+                                width: 6, height: 6, borderRadius: "50%",
+                                background: i <= step ? cat.color : "rgba(255,255,255,0.1)",
+                              }} />
+                            ))}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem" }}>{done.length}/{catKeys.length}</span>
                 </div>
               );
             })}
@@ -868,6 +974,10 @@ export default function App() {
       return (
         <div style={styles.page}>
           {notification && <div style={styles.notif}>{notification}</div>}
+          <button onClick={() => { setScreen("floor"); }}
+            style={{ ...styles.passBtn, position: "fixed", top: 12, left: 12, padding: "6px 12px", fontSize: "0.65rem", zIndex: 999 }}>
+            LEAVE
+          </button>
 
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ ...styles.title, fontSize: "clamp(1.4rem,5vw,1.8rem)" }}>STUDY TIME</div>
@@ -882,14 +992,14 @@ export default function App() {
           }}>
             {catKeys.map(key => {
               const cat = CATS[key];
-              const done = studiedCategories.includes(key);
+              const done = stepProgress[key] || 0;
               return (
                 <button key={key}
-                  onClick={() => { setStudyCategory(key); setStudyIndex(0); setStudyRevealed(false); }}
+                  onClick={() => enterCategory(key)}
                   style={{
-                    padding: "18px 10px", borderRadius: 14,
-                    background: done ? `${cat.color}18` : "rgba(255,255,255,0.04)",
-                    border: `2px solid ${done ? cat.color + "70" : cat.color + "30"}`,
+                    padding: "16px 10px", borderRadius: 14,
+                    background: done >= 3 ? `${cat.color}18` : "rgba(255,255,255,0.04)",
+                    border: `2px solid ${done >= 3 ? cat.color + "70" : cat.color + "30"}`,
                     cursor: "pointer", display: "flex", flexDirection: "column",
                     alignItems: "center", gap: 6, position: "relative",
                     fontFamily: "inherit",
@@ -899,170 +1009,378 @@ export default function App() {
                   <span style={{ fontSize: "0.75rem", fontWeight: 700, color: cat.color, textTransform: "uppercase" }}>
                     {cat.label}
                   </span>
-                  {done && (
-                    <span style={{
-                      position: "absolute", top: 6, right: 6,
-                      fontSize: "0.8rem", color: "#2ed573",
-                    }}>done</span>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {[1, 2, 3].map(i => (
+                      <div key={i} style={{
+                        width: 8, height: 8, borderRadius: "50%",
+                        background: i <= done ? cat.color : "rgba(255,255,255,0.15)",
+                      }} />
+                    ))}
+                  </div>
+                  {done >= 3 && (
+                    <span style={{ position: "absolute", top: 4, right: 6, fontSize: "0.6rem", color: "#2ed573", fontWeight: 700 }}>READY</span>
                   )}
                 </button>
               );
             })}
           </div>
 
-          <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.7rem", marginTop: 20 }}>
-            {studiedCategories.length}/{catKeys.length} categories studied
+          <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.7rem", marginTop: 16 }}>
+            Step 1: Flashcard / Step 2: Cloze / Step 3: Picture Quiz
           </p>
         </div>
       );
     }
 
-    // ── Student: flashcard drill ──
-    const catQuestions = QDB[studyCategory];
-    const currentCard = catQuestions[studyIndex];
+    // ── Step header (shared) ──
     const catInfo = CATS[studyCategory];
-    const isLastCard = studyIndex >= catQuestions.length - 1;
+    const stepLabels = { 1: "Flashcard", 2: "Cloze", 3: "Picture Quiz" };
 
-    return (
-      <div style={styles.page}>
-        {notification && <div style={styles.notif}>{notification}</div>}
-
-        {/* Back button */}
-        <button
-          onClick={() => setStudyCategory(null)}
-          style={{ ...styles.passBtn, alignSelf: "flex-start", marginBottom: 12, fontSize: "0.7rem" }}
-        >
+    const stepHeader = (
+      <div style={{ textAlign: "center", marginBottom: 12, width: "100%" }}>
+        <button onClick={() => setStudyCategory(null)}
+          style={{ ...styles.passBtn, position: "fixed", top: 12, left: 12, padding: "6px 12px", fontSize: "0.65rem", zIndex: 999 }}>
           Back
         </button>
-
-        {/* Category + progress */}
         <div style={{
-          padding: "5px 16px", marginBottom: 8,
+          padding: "5px 16px", display: "inline-block",
           background: `${catInfo.color}18`, border: `1.5px solid ${catInfo.color}50`,
           borderRadius: 24, fontSize: "0.72rem", fontWeight: 700,
           textTransform: "uppercase", letterSpacing: "0.12em", color: catInfo.color,
         }}>
-          {catInfo.icon} {catInfo.label}
+          {catInfo.icon} {catInfo.label} — Step {studyStep}: {stepLabels[studyStep]}
         </div>
-        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 20 }}>
-          {studyIndex + 1} / {catQuestions.length}
-        </p>
-
-        {/* Flashcard */}
-        <div
-          onClick={() => setStudyRevealed(true)}
-          style={{
-            width: "min(300px, 85vw)", minHeight: 220, borderRadius: 20,
-            background: "rgba(255,255,255,0.04)", border: `2px solid ${catInfo.color}40`,
-            display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center",
-            cursor: studyRevealed ? "default" : "pointer",
-            padding: 20, marginBottom: 16,
-            transition: "border-color 0.2s",
-          }}
-        >
-          <img src={currentCard.img} alt="" style={{
-            width: "clamp(140px, 45vw, 200px)", height: "clamp(140px, 45vw, 200px)",
-            objectFit: "cover", borderRadius: 16, marginBottom: 16,
-          }} />
-          {studyRevealed ? (
-            <div style={{
-              fontSize: "1.5rem", fontWeight: 700, color: catInfo.color,
-              letterSpacing: "0.05em", animation: "pulse 0.4s ease",
-            }}>
-              {currentCard.answer}
-            </div>
-          ) : (
-            <div style={{
-              padding: "8px 20px", borderRadius: 10,
-              background: `${catInfo.color}15`, border: `1px solid ${catInfo.color}40`,
-              color: catInfo.color, fontSize: "0.75rem", fontWeight: 600,
-            }}>
-              TAP TO REVEAL
-            </div>
-          )}
+        <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 8 }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} style={{
+              width: 24, height: 4, borderRadius: 2,
+              background: i <= studyStep ? catInfo.color : "rgba(255,255,255,0.12)",
+            }} />
+          ))}
         </div>
-
-        {/* Mic practice (optional, only after reveal) */}
-        {studyRevealed && speechSupported && (
-          <button
-            onClick={() => {
-              if (listening) { stopListening(); return; }
-              const recognition = new SpeechRecognition();
-              recognition.lang = "en-US";
-              recognition.continuous = false;
-              recognition.interimResults = false;
-              recognition.maxAlternatives = 5;
-              recognition.onstart = () => { setListening(true); setSpokenText(""); };
-              recognition.onend = () => { setListening(false); recognitionRef.current = null; };
-              recognition.onresult = (event) => {
-                const results = event.results[0];
-                setSpokenText(results[0].transcript);
-                let matched = false;
-                for (let i = 0; i < results.length; i++) {
-                  if (checkSpeechMatch(results[i].transcript, currentCard.answer)) { matched = true; break; }
-                }
-                setShake(!matched);
-                if (!matched) setTimeout(() => setShake(false), 400);
-              };
-              recognition.onerror = () => { setListening(false); recognitionRef.current = null; };
-              recognitionRef.current = recognition;
-              recognition.start();
-            }}
-            style={{
-              width: 56, height: 56, borderRadius: "50%", marginBottom: 8,
-              background: listening
-                ? "radial-gradient(circle, #ff4757, #ff6b81)"
-                : `radial-gradient(circle, ${catInfo.color}, ${catInfo.color}cc)`,
-              border: `2px solid ${listening ? "#ff4757" : catInfo.color}`,
-              boxShadow: listening ? "0 0 20px rgba(255,71,87,0.4)" : "none",
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "1.4rem", animation: listening ? "pulse 1s ease-in-out infinite" : "none",
-            }}
-          >
-            {listening ? "..." : "🎤"}
-          </button>
-        )}
-        {spokenText && (
-          <p style={{ color: checkSpeechMatch(spokenText, currentCard.answer) ? "#2ed573" : "#ff4757", fontSize: "0.8rem", marginBottom: 8 }}>
-            "{spokenText}" {checkSpeechMatch(spokenText, currentCard.answer) ? "- Correct!" : "- Try again"}
-          </p>
-        )}
-
-        {/* Next / Done button */}
-        {studyRevealed && (
-          <button
-            onClick={() => {
-              if (isLastCard) {
-                // Category complete
-                if (!studiedCategories.includes(studyCategory)) {
-                  setStudiedCategories(prev => [...prev, studyCategory]);
-                }
-                socket.send(JSON.stringify({ type: "study_complete", category: studyCategory }));
-                setStudyCategory(null);
-                setSpokenText("");
-              } else {
-                setStudyIndex(prev => prev + 1);
-                setStudyRevealed(false);
-                setSpokenText("");
-              }
-            }}
-            style={{
-              ...styles.btn, maxWidth: 200, marginTop: 8,
-              background: isLastCard
-                ? "linear-gradient(135deg, #2ed573, #10b981)"
-                : "linear-gradient(135deg, #00d4ff, #0096ff)",
-            }}
-          >
-            {isLastCard ? "DONE" : "NEXT"}
-          </button>
-        )}
-
-        <style>{`
-          @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
-        `}</style>
       </div>
     );
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 1: Enhanced Flashcard (わかった / もう一度)
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 1) {
+      const currentCard = studyDeck[0];
+      if (!currentCard) {
+        // All done — complete step
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🎉</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>Step 1 Complete!</div>
+              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.8rem", margin: "10px 0 20px" }}>
+                {studyDone.length} words learned
+              </p>
+              <button style={styles.btn} onClick={() => completeStep(studyCategory, 1)}>
+                Next: Cloze Quiz
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {studyDone.length} learned / {studyDeck.length} remaining
+          </p>
+
+          {/* Flashcard */}
+          <div onClick={() => { if (!studyRevealed) { setStudyRevealed(true); speakWord(currentCard.answer); } }}
+            style={{
+              width: "min(300px, 85vw)", minHeight: 240, borderRadius: 20,
+              background: "rgba(255,255,255,0.04)", border: `2px solid ${catInfo.color}40`,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              cursor: studyRevealed ? "default" : "pointer",
+              padding: 20, marginBottom: 16,
+            }}
+          >
+            <img src={currentCard.img} alt="" style={{
+              width: "clamp(130px, 40vw, 180px)", height: "clamp(130px, 40vw, 180px)",
+              objectFit: "cover", borderRadius: 16, marginBottom: 12,
+            }} />
+            {studyRevealed ? (
+              <>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700, color: catInfo.color, marginBottom: 4 }}>
+                  {currentCard.answer}
+                </div>
+                <div style={{ fontSize: "0.9rem", color: "rgba(255,255,255,0.5)" }}>
+                  {currentCard.meaning}
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); speakWord(currentCard.answer); }}
+                  style={{ marginTop: 8, background: "none", border: "none", fontSize: "1.4rem", cursor: "pointer" }}>
+                  🔊
+                </button>
+              </>
+            ) : (
+              <div style={{
+                padding: "8px 20px", borderRadius: 10,
+                background: `${catInfo.color}15`, border: `1px solid ${catInfo.color}40`,
+                color: catInfo.color, fontSize: "0.75rem", fontWeight: 600,
+              }}>
+                TAP TO REVEAL
+              </div>
+            )}
+          </div>
+
+          {/* わかった / もう一度 */}
+          {studyRevealed && (
+            <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 300 }}>
+              <button onClick={() => {
+                setStudyDeck(prev => prev.slice(1));
+                setStudyRevealed(false);
+              }} style={{
+                ...styles.passBtn, flex: 1, padding: "12px 8px",
+                color: "#ffa502", border: "1.5px solid rgba(255,165,0,0.3)",
+                fontSize: "0.8rem",
+              }}>
+                もう一度
+              </button>
+              <button onClick={() => {
+                setStudyDone(prev => [...prev, currentCard]);
+                setStudyDeck(prev => prev.slice(1));
+                setStudyRevealed(false);
+              }} style={{
+                ...styles.btn, flex: 1, padding: "12px 8px",
+                background: "linear-gradient(135deg, #2ed573, #10b981)",
+                fontSize: "0.8rem",
+              }}>
+                わかった
+              </button>
+            </div>
+          )}
+          <style>{`@keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }`}</style>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 2: Cloze Flashcard (4択)
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 2) {
+      const current = clozeQueue[0];
+      if (!current) {
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🎉</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>Step 2 Complete!</div>
+              <button style={{ ...styles.btn, marginTop: 20 }} onClick={() => completeStep(studyCategory, 2)}>
+                Next: Picture Quiz
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {clozeQueue.length} remaining
+          </p>
+
+          {/* Show image */}
+          <img src={current.img} alt="" style={{
+            width: "clamp(120px, 35vw, 160px)", height: "clamp(120px, 35vw, 160px)",
+            objectFit: "cover", borderRadius: 16, marginBottom: 10,
+          }} />
+
+          {/* Hint */}
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", marginBottom: 4 }}>
+            {current.meaning}
+          </p>
+          <p style={{ color: catInfo.color, fontSize: "0.75rem", marginBottom: 16, fontWeight: 600 }}>
+            {current.answer[0]}{"_".repeat(current.answer.length - 1)} ?
+          </p>
+
+          {/* 4 choices */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+            {clozeChoices.map(choice => {
+              const isCorrect = choice.answer === current.answer;
+              const showGreen = clozeFeedback && isCorrect;
+              const showRed = clozeFeedback === choice.answer && !isCorrect;
+              return (
+                <button key={choice.answer}
+                  disabled={!!clozeFeedback}
+                  onClick={() => {
+                    if (isCorrect) {
+                      setClozeFeedback(choice.answer);
+                      speakWord(choice.answer);
+                      setTimeout(() => {
+                        const next = clozeQueue.slice(1);
+                        setClozeQueue(next);
+                        if (next.length > 0) {
+                          const others = QDB[studyCategory].filter(x => x.answer !== next[0].answer);
+                          setClozeChoices(shuffle([next[0], ...shuffle(others).slice(0, 3)]));
+                        }
+                        setClozeFeedback(null);
+                      }, 800);
+                    } else {
+                      setClozeFeedback(choice.answer);
+                      setTimeout(() => {
+                        // Move to end of queue
+                        setClozeQueue(prev => [...prev.slice(1), prev[0]]);
+                        const next0 = clozeQueue[1] || clozeQueue[0];
+                        const others = QDB[studyCategory].filter(x => x.answer !== next0.answer);
+                        setClozeChoices(shuffle([next0, ...shuffle(others).slice(0, 3)]));
+                        setClozeFeedback(null);
+                      }, 1000);
+                    }
+                  }}
+                  style={{
+                    padding: "12px 8px", borderRadius: 12,
+                    background: showGreen ? "rgba(46,213,115,0.2)" : showRed ? "rgba(255,71,87,0.2)" : "rgba(255,255,255,0.06)",
+                    border: `2px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.15)"}`,
+                    color: showGreen ? "#2ed573" : showRed ? "#ff4757" : "white",
+                    fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
+                    fontFamily: "inherit", transition: "all 0.15s",
+                  }}
+                >
+                  {choice.answer}
+                </button>
+              );
+            })}
+          </div>
+          <style>{`@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-8px)} 75%{transform:translateX(8px)} }`}</style>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // STEP 3: Picture Quiz
+    // ════════════════════════════════════════════════════════════════
+    if (studyStep === 3) {
+      const current = quizQueue[0];
+      if (!current) {
+        return (
+          <div style={{ ...styles.page, justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "3rem", marginBottom: 10 }}>🏆</div>
+              <div style={{ ...styles.title, fontSize: "1.5rem" }}>All Steps Complete!</div>
+              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.8rem", margin: "10px 0 20px" }}>
+                {catInfo.icon} {catInfo.label} — Ready for Duel!
+              </p>
+              <button style={styles.btn} onClick={() => completeStep(studyCategory, 3)}>
+                Choose another category
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      const advanceQuiz = (correct) => {
+        setTimeout(() => {
+          if (correct) {
+            const next = quizQueue.slice(1);
+            setQuizQueue(next);
+            if (next.length > 0) {
+              const newMode = Math.random() > 0.5 ? "pic2word" : "word2pic";
+              setupQuizChoices(next[0], studyCategory, newMode);
+            }
+          } else {
+            // Move to end
+            const requeued = [...quizQueue.slice(1), quizQueue[0]];
+            setQuizQueue(requeued);
+            const newMode = Math.random() > 0.5 ? "pic2word" : "word2pic";
+            setupQuizChoices(requeued[0], studyCategory, newMode);
+          }
+          setQuizFeedback(null);
+        }, 800);
+      };
+
+      return (
+        <div style={styles.page}>
+          {stepHeader}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.7rem", marginBottom: 12 }}>
+            {quizQueue.length} remaining
+          </p>
+
+          {quizMode === "word2pic" ? (
+            <>
+              {/* Show word + audio, pick from 4 images */}
+              <div style={{ marginBottom: 16, textAlign: "center" }}>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700, color: catInfo.color, marginBottom: 4 }}>
+                  {current.answer}
+                </div>
+                <button onClick={() => speakWord(current.answer)}
+                  style={{ background: "none", border: "none", fontSize: "1.4rem", cursor: "pointer" }}>
+                  🔊
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 320 }}>
+                {quizChoices.map(choice => {
+                  const isCorrect = choice.answer === current.answer;
+                  const showGreen = quizFeedback && isCorrect;
+                  const showRed = quizFeedback === choice.answer && !isCorrect;
+                  return (
+                    <div key={choice.answer}
+                      onClick={() => {
+                        if (quizFeedback) return;
+                        setQuizFeedback(choice.answer);
+                        if (isCorrect) speakWord(choice.answer);
+                        advanceQuiz(isCorrect);
+                      }}
+                      style={{
+                        borderRadius: 14, overflow: "hidden", cursor: "pointer",
+                        border: `3px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.1)"}`,
+                        transform: showGreen ? "scale(1.05)" : showRed ? "scale(0.95)" : "scale(1)",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      <img src={choice.img} alt="" style={{
+                        width: "100%", aspectRatio: "1", objectFit: "cover", display: "block",
+                      }} />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Show 1 image, pick from 4 words */}
+              <img src={current.img} alt="" style={{
+                width: "clamp(150px, 40vw, 200px)", height: "clamp(150px, 40vw, 200px)",
+                objectFit: "cover", borderRadius: 16, marginBottom: 16,
+              }} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+                {quizChoices.map(choice => {
+                  const isCorrect = choice.answer === current.answer;
+                  const showGreen = quizFeedback && isCorrect;
+                  const showRed = quizFeedback === choice.answer && !isCorrect;
+                  return (
+                    <button key={choice.answer}
+                      disabled={!!quizFeedback}
+                      onClick={() => {
+                        setQuizFeedback(choice.answer);
+                        if (isCorrect) speakWord(choice.answer);
+                        advanceQuiz(isCorrect);
+                      }}
+                      style={{
+                        padding: "12px 8px", borderRadius: 12,
+                        background: showGreen ? "rgba(46,213,115,0.2)" : showRed ? "rgba(255,71,87,0.2)" : "rgba(255,255,255,0.06)",
+                        border: `2px solid ${showGreen ? "#2ed573" : showRed ? "#ff4757" : "rgba(255,255,255,0.15)"}`,
+                        color: showGreen ? "#2ed573" : showRed ? "#ff4757" : "white",
+                        fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
+                        fontFamily: "inherit", transition: "all 0.15s",
+                      }}
+                    >
+                      {choice.answer}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
   }
 
   // ── DUEL ──────────────────────────────────────────────────────────
