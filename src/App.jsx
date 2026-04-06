@@ -199,6 +199,42 @@ class GameBGM {
 
 const bgm = new GameBGM();
 
+// ── SFX (correct / wrong) ──────────────────────────────────────────
+const playSFX = (type) => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (type === "correct") {
+      // Rising two-tone chime
+      [523.25, 659.25].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, ctx.currentTime + i * 0.12);
+        gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + i * 0.12 + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.12 + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + i * 0.12);
+        osc.stop(ctx.currentTime + i * 0.12 + 0.4);
+      });
+    } else {
+      // Low buzz
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = 150;
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.35);
+    }
+    setTimeout(() => ctx.close(), 1000);
+  } catch {}
+};
+
 // ── APP ────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState("join"); // join | floor | input | duel
@@ -1006,7 +1042,7 @@ export default function App() {
 
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(2, 1fr)",
-            gap: 10, width: "100%", maxWidth: 340,
+            gap: 10, width: "100%", maxWidth: 500,
           }}>
             {catKeys.map(key => {
               const cat = CATS[key];
@@ -1015,7 +1051,7 @@ export default function App() {
                 <button key={key}
                   onClick={() => enterCategory(key)}
                   style={{
-                    padding: "16px 10px", borderRadius: 14,
+                    padding: "24px 14px", borderRadius: 14,
                     background: done >= 3 ? `${cat.color}18` : "rgba(255,255,255,0.04)",
                     border: `2px solid ${done >= 6 ? cat.color + "70" : cat.color + "30"}`,
                     cursor: "pointer", display: "flex", flexDirection: "column",
@@ -1023,8 +1059,8 @@ export default function App() {
                     fontFamily: "inherit",
                   }}
                 >
-                  <span style={{ fontSize: "1.8rem" }}>{cat.icon}</span>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: cat.color, textTransform: "uppercase" }}>
+                  <span style={{ fontSize: "clamp(2rem, 5vw, 3rem)" }}>{cat.icon}</span>
+                  <span style={{ fontSize: "clamp(0.8rem, 2vw, 1.1rem)", fontWeight: 700, color: cat.color, textTransform: "uppercase" }}>
                     {cat.label}
                   </span>
                   <div style={{ display: "flex", gap: 3 }}>
@@ -1046,6 +1082,22 @@ export default function App() {
           <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.7rem", marginTop: 16 }}>
             6 steps: Flashcard → Cloze → Picture → Sound → Meaning → Spelling
           </p>
+
+          {/* Skip mode for advanced students */}
+          <button onClick={() => {
+            const all = {};
+            catKeys.forEach(k => { all[k] = 6; });
+            setStepProgress(all);
+            catKeys.forEach(k => {
+              try { socket.send(JSON.stringify({ type: "step_complete", category: k, step: 6 })); } catch {}
+            });
+            showNotif("All steps skipped — ready for duel!");
+          }} style={{
+            ...styles.passBtn, marginTop: 12, padding: "10px 20px",
+            fontSize: "0.75rem", color: "rgba(255,255,255,0.35)",
+          }}>
+            SKIP ALL (advanced)
+          </button>
         </div>
       );
     }
@@ -1076,6 +1128,10 @@ export default function App() {
             }} />
           ))}
         </div>
+        <button onClick={() => completeStep(studyCategory, studyStep)}
+          style={{ marginTop: 6, background: "none", border: "none", color: "rgba(255,255,255,0.25)", fontSize: "0.6rem", cursor: "pointer", fontFamily: "inherit" }}>
+          skip this step
+        </button>
       </div>
     );
 
@@ -1111,7 +1167,7 @@ export default function App() {
           {/* Flashcard */}
           <div onClick={() => { if (!studyRevealed) { setStudyRevealed(true); speakWord(currentCard.answer); } }}
             style={{
-              width: "min(300px, 85vw)", minHeight: 240, borderRadius: 20,
+              width: "min(500px, 90vw)", minHeight: 320, borderRadius: 20,
               background: "rgba(255,255,255,0.04)", border: `2px solid ${catInfo.color}40`,
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
@@ -1120,15 +1176,15 @@ export default function App() {
             }}
           >
             <img src={currentCard.img} alt="" style={{
-              width: "clamp(130px, 40vw, 180px)", height: "clamp(130px, 40vw, 180px)",
+              width: "clamp(160px, 30vw, 280px)", height: "clamp(160px, 30vw, 280px)",
               objectFit: "cover", borderRadius: 16, marginBottom: 12,
             }} />
             {studyRevealed ? (
               <>
-                <div style={{ fontSize: "1.4rem", fontWeight: 700, color: catInfo.color, marginBottom: 4 }}>
+                <div style={{ fontSize: "clamp(1.6rem, 4vw, 2.4rem)", fontWeight: 700, color: catInfo.color, marginBottom: 4 }}>
                   {currentCard.answer}
                 </div>
-                <div style={{ fontSize: "0.9rem", color: "rgba(255,255,255,0.5)" }}>
+                <div style={{ fontSize: "clamp(1rem, 2.5vw, 1.4rem)", color: "rgba(255,255,255,0.5)" }}>
                   {currentCard.meaning}
                 </div>
                 <button onClick={(e) => { e.stopPropagation(); speakWord(currentCard.answer); }}
@@ -1149,7 +1205,7 @@ export default function App() {
 
           {/* わかった / もう一度 */}
           {studyRevealed && (
-            <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 300 }}>
+            <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 500 }}>
               <button onClick={() => {
                 setStudyDeck(prev => prev.slice(1));
                 setStudyRevealed(false);
@@ -1206,7 +1262,7 @@ export default function App() {
 
           {/* Show image */}
           <img src={current.img} alt="" style={{
-            width: "clamp(120px, 35vw, 160px)", height: "clamp(120px, 35vw, 160px)",
+            width: "clamp(160px, 28vw, 260px)", height: "clamp(160px, 28vw, 260px)",
             objectFit: "cover", borderRadius: 16, marginBottom: 10,
           }} />
 
@@ -1219,7 +1275,7 @@ export default function App() {
           </p>
 
           {/* 4 choices */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
             {clozeChoices.map(choice => {
               const isCorrect = choice.answer === current.answer;
               const showGreen = clozeFeedback && isCorrect;
@@ -1231,6 +1287,7 @@ export default function App() {
                     if (isCorrect) {
                       setClozeFeedback(choice.answer);
                       speakWord(choice.answer);
+                      playSFX("correct");
                       setTimeout(() => {
                         const next = clozeQueue.slice(1);
                         setClozeQueue(next);
@@ -1242,6 +1299,7 @@ export default function App() {
                       }, 800);
                     } else {
                       setClozeFeedback(choice.answer);
+                      playSFX("wrong");
                       setTimeout(() => {
                         // Move to end of queue
                         setClozeQueue(prev => [...prev.slice(1), prev[0]]);
@@ -1291,6 +1349,7 @@ export default function App() {
       }
 
       const advanceQuiz = (correct) => {
+        playSFX(correct ? "correct" : "wrong");
         setTimeout(() => {
           if (correct) {
             const next = quizQueue.slice(1);
@@ -1329,7 +1388,7 @@ export default function App() {
                   🔊
                 </button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 320 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
                 {quizChoices.map(choice => {
                   const isCorrect = choice.answer === current.answer;
                   const showGreen = quizFeedback && isCorrect;
@@ -1361,10 +1420,10 @@ export default function App() {
             <>
               {/* Show 1 image, pick from 4 words */}
               <img src={current.img} alt="" style={{
-                width: "clamp(150px, 40vw, 200px)", height: "clamp(150px, 40vw, 200px)",
+                width: "clamp(180px, 30vw, 280px)", height: "clamp(180px, 30vw, 280px)",
                 objectFit: "cover", borderRadius: 16, marginBottom: 16,
               }} />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
                 {quizChoices.map(choice => {
                   const isCorrect = choice.answer === current.answer;
                   const showGreen = quizFeedback && isCorrect;
@@ -1438,7 +1497,7 @@ export default function App() {
           </p>
 
           {/* 4 image choices */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
             {soundChoices.map(choice => {
               const isCorrect = choice.answer === current.answer;
               const showGreen = soundFeedback && isCorrect;
@@ -1448,6 +1507,7 @@ export default function App() {
                   onClick={() => {
                     if (soundFeedback) return;
                     setSoundFeedback(choice.answer);
+                    playSFX(isCorrect ? "correct" : "wrong");
                     setTimeout(() => {
                       if (isCorrect) {
                         const next = soundQueue.slice(1);
@@ -1509,7 +1569,7 @@ export default function App() {
 
           {/* Show image + meaning */}
           <img src={current.img} alt="" style={{
-            width: "clamp(120px, 35vw, 160px)", height: "clamp(120px, 35vw, 160px)",
+            width: "clamp(160px, 28vw, 260px)", height: "clamp(160px, 28vw, 260px)",
             objectFit: "cover", borderRadius: 16, marginBottom: 6,
           }} />
           <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", marginBottom: 16 }}>
@@ -1520,7 +1580,7 @@ export default function App() {
           </p>
 
           {/* 4 sound buttons */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 300 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%", maxWidth: 500 }}>
             {soundChoices.map(choice => {
               const isCorrect = choice.answer === current.answer;
               const showGreen = soundFeedback && isCorrect;
@@ -1531,6 +1591,7 @@ export default function App() {
                     speakWord(choice.answer);
                     if (soundFeedback) return;
                     setSoundFeedback(choice.answer);
+                    playSFX(isCorrect ? "correct" : "wrong");
                     setTimeout(() => {
                       if (isCorrect) {
                         const next = soundQueue.slice(1);
@@ -1622,6 +1683,7 @@ export default function App() {
               if (e.key !== "Enter") return;
               const correct = spellInput.toLowerCase().trim() === current.answer.toLowerCase();
               setSoundFeedback(correct ? "correct" : "wrong");
+              playSFX(correct ? "correct" : "wrong");
               if (correct) speakWord(current.answer);
               setTimeout(() => {
                 if (correct) {
@@ -1656,6 +1718,7 @@ export default function App() {
             if (soundFeedback) return;
             const correct = spellInput.toLowerCase().trim() === current.answer.toLowerCase();
             setSoundFeedback(correct ? "correct" : "wrong");
+            playSFX(correct ? "correct" : "wrong");
             if (correct) speakWord(current.answer);
             setTimeout(() => {
               if (correct) {
@@ -1939,6 +2002,9 @@ const styles = {
     flexDirection: "column",
     alignItems: "center",
     padding: "28px 16px",
+    boxSizing: "border-box",
+    width: "100%",
+    maxWidth: "100vw",
   },
   tvPage: {
     minHeight: "100vh",
@@ -1967,7 +2033,7 @@ const styles = {
     borderRadius: 16,
     padding: "24px 28px",
     width: "100%",
-    maxWidth: 380,
+    maxWidth: 520,
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
@@ -1994,12 +2060,12 @@ const styles = {
   },
   btn: {
     flex: 1,
-    padding: "13px 16px",
+    padding: "16px 20px",
     background: "linear-gradient(135deg, #00d4ff, #0096ff)",
     color: "#000",
     border: "none",
     borderRadius: 12,
-    fontSize: "0.85rem",
+    fontSize: "clamp(0.9rem, 2vw, 1.1rem)",
     fontWeight: 700,
     cursor: "pointer",
     letterSpacing: "0.08em",
@@ -2018,10 +2084,10 @@ const styles = {
   },
   ansInput: {
     width: "100%",
-    maxWidth: 300,
-    padding: "14px 20px",
+    maxWidth: 500,
+    padding: "16px 24px",
     borderRadius: 14,
-    fontSize: "1.1rem",
+    fontSize: "clamp(1.1rem, 2.5vw, 1.4rem)",
     textAlign: "center",
     outline: "none",
     color: "white",
