@@ -306,6 +306,26 @@ export default function App() {
     return () => bgm.stop();
   }, []);
 
+  // Classroom duel timer
+  useEffect(() => {
+    if (screen !== "classroom-duel" || !classroomDuel || classroomDuel.ended) return;
+    const timer = setInterval(() => {
+      setClassroomDuel(prev => {
+        if (!prev || prev.ended) return prev;
+        if (prev.active === 1) {
+          const next = prev.p1Time - 1;
+          if (next <= 0) return { ...prev, p1Time: 0, ended: true, winner: prev.p2 };
+          return { ...prev, p1Time: next };
+        } else {
+          const next = prev.p2Time - 1;
+          if (next <= 0) return { ...prev, p2Time: 0, ended: true, winner: prev.p1 };
+          return { ...prev, p2Time: next };
+        }
+      });
+    }, 100);
+    return () => clearInterval(timer);
+  }, [screen, classroomDuel?.active, classroomDuel?.ended]);
+
   // ── PartySocket connection ──────────────────────────────────────
   const socket = usePartySocket({
     host: HOST,
@@ -1887,27 +1907,6 @@ export default function App() {
       );
     }
   }
-
-  // ── CLASSROOM DUEL (teacher-only, no server needed) ─────────────
-  // Classroom duel timer (must be top-level, not inside conditional)
-  useEffect(() => {
-    if (screen !== "classroom-duel" || !classroomDuel || classroomDuel.ended) return;
-    const timer = setInterval(() => {
-      setClassroomDuel(prev => {
-        if (!prev || prev.ended) return prev;
-        if (prev.active === 1) {
-          const next = prev.p1Time - 1;
-          if (next <= 0) return { ...prev, p1Time: 0, ended: true, winner: prev.p2 };
-          return { ...prev, p1Time: next };
-        } else {
-          const next = prev.p2Time - 1;
-          if (next <= 0) return { ...prev, p2Time: 0, ended: true, winner: prev.p1 };
-          return { ...prev, p2Time: next };
-        }
-      });
-    }, 100);
-    return () => clearInterval(timer);
-  }, [screen, classroomDuel?.active, classroomDuel?.ended]);
 
   if (screen === "classroom-duel" && classroomDuel) {
     const d = classroomDuel;
