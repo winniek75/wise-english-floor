@@ -295,6 +295,8 @@ export default function App() {
   const [soundFeedback, setSoundFeedback] = useState(null);
   const [spellInput, setSpellInput] = useState("");
   const [spellHint, setSpellHint] = useState("");
+  const [quizStreak, setQuizStreak] = useState(0);
+  const [showStreakPopup, setShowStreakPopup] = useState(false);
   const [myId, setMyId] = useState(null);
   const [myName, setMyName] = useState("");
   const [roomCode, setRoomCode] = useState("");
@@ -502,6 +504,7 @@ export default function App() {
 
   const completeStep = (cat, step) => {
     setStepProgress(prev => ({ ...prev, [cat]: Math.max(prev[cat] || 0, step) }));
+    setQuizStreak(0);
     try { socket.send(JSON.stringify({ type: "step_complete", category: cat, step })); } catch {}
     if (step < 6) {
       startStep(cat, step + 1);
@@ -1309,8 +1312,25 @@ export default function App() {
     const catInfo = CATS[studyCategory];
     const stepLabels = { 1: "Flashcard", 2: "Cloze", 3: "Picture Quiz", 4: "Sound→Meaning", 5: "Meaning→Sound", 6: "Sound→Spelling" };
 
+    const streakPopup = showStreakPopup && (
+      <div style={{
+        position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)",
+        zIndex: 1000, background: "rgba(0,0,0,0.85)", borderRadius: 20,
+        padding: "16px 32px", textAlign: "center",
+        border: "2px solid #FFD700", animation: "slideIn 0.3s ease-out",
+      }}>
+        <div style={{ fontSize: "2rem", marginBottom: 4 }}>
+          {quizStreak >= 9 ? "\uD83D\uDD25" : quizStreak >= 6 ? "\u2B50" : "\uD83C\uDF1F"}
+        </div>
+        <div style={{ color: "#FFD700", fontWeight: 900, fontSize: "1.2rem" }}>
+          {quizStreak} COMBO!
+        </div>
+      </div>
+    );
+
     const stepHeader = (
       <div style={{ textAlign: "center", marginBottom: 12, width: "100%" }}>
+        {streakPopup}
         <button onClick={() => setStudyCategory(null)}
           style={{ ...styles.passBtn, position: "fixed", top: 12, left: 12, padding: "6px 12px", fontSize: "0.65rem", zIndex: 999 }}>
           Back
@@ -1497,6 +1517,12 @@ export default function App() {
                       setClozeFeedback(choice.answer);
                       speakWord(choice.answer);
                       playSFX("correct");
+                      const newStreak = quizStreak + 1;
+                      setQuizStreak(newStreak);
+                      if (newStreak >= 3 && newStreak % 3 === 0) {
+                        setShowStreakPopup(true);
+                        setTimeout(() => setShowStreakPopup(false), 1200);
+                      }
                       setTimeout(() => {
                         const next = clozeQueue.slice(1);
                         setClozeQueue(next);
@@ -1509,6 +1535,7 @@ export default function App() {
                     } else {
                       setClozeFeedback(choice.answer);
                       playSFX("wrong");
+                      setQuizStreak(0);
                       recordWrong(studyCategory, current.answer);
                       setTimeout(() => {
                         // Move to end of queue
@@ -1560,6 +1587,16 @@ export default function App() {
 
       const advanceQuiz = (correct) => {
         playSFX(correct ? "correct" : "wrong");
+        if (correct) {
+          const newStreak = quizStreak + 1;
+          setQuizStreak(newStreak);
+          if (newStreak >= 3 && newStreak % 3 === 0) {
+            setShowStreakPopup(true);
+            setTimeout(() => setShowStreakPopup(false), 1200);
+          }
+        } else {
+          setQuizStreak(0);
+        }
         if (!correct) recordWrong(studyCategory, current.answer);
         setTimeout(() => {
           if (correct) {
