@@ -204,35 +204,63 @@ const playSFX = (type) => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (type === "correct") {
-      // Rising two-tone chime
-      [523.25, 659.25].forEach((freq, i) => {
+      // C-E-G major chord chime: sine wave, 0.2 gain, 0.3s duration, 0.1s spacing
+      [523.25, 659.25, 783.99].forEach((freq, i) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = "sine";
         osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, ctx.currentTime + i * 0.12);
-        gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + i * 0.12 + 0.04);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.12 + 0.35);
+        const t = ctx.currentTime + i * 0.1;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.2, t + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
         osc.connect(gain);
         gain.connect(ctx.destination);
-        osc.start(ctx.currentTime + i * 0.12);
-        osc.stop(ctx.currentTime + i * 0.12 + 0.4);
+        osc.start(t);
+        osc.stop(t + 0.35);
       });
     } else {
-      // Low buzz
+      // Wrong: square wave sweeping 150 -> 100 Hz over 0.2s
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "square";
-      osc.frequency.value = 150;
-      gain.gain.setValueAtTime(0.18, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.frequency.setValueAtTime(150, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.35);
+      osc.stop(ctx.currentTime + 0.25);
     }
     setTimeout(() => ctx.close(), 1000);
   } catch {}
+};
+
+// ── localStorage helpers ──────────────────────────────────────────
+const STORAGE_KEY_PROGRESS = "wise-floor-step-progress";
+const STORAGE_KEY_WRONG = "wise-floor-wrong-answers";
+
+const loadProgress = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PROGRESS);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+};
+
+const saveProgress = (progress) => {
+  try { localStorage.setItem(STORAGE_KEY_PROGRESS, JSON.stringify(progress)); } catch {}
+};
+
+const loadWrongAnswers = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_WRONG);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+};
+
+const saveWrongAnswers = (wrong) => {
+  try { localStorage.setItem(STORAGE_KEY_WRONG, JSON.stringify(wrong)); } catch {}
 };
 
 // ── APP ────────────────────────────────────────────────────────────
@@ -240,7 +268,8 @@ export default function App() {
   const [screen, setScreen] = useState("join"); // join | floor | input | duel
   const [studyCategory, setStudyCategory] = useState(null);
   const [studyStep, setStudyStep] = useState(1); // 1-6
-  const [stepProgress, setStepProgress] = useState({}); // { animals: 6, food: 1 }
+  const [stepProgress, setStepProgress] = useState(() => loadProgress()); // { animals: 6, food: 1 }
+  const [wrongAnswers, setWrongAnswers] = useState(() => loadWrongAnswers()); // { "animals:elephant": 3, ... }
   // Step 1: Flashcard
   const [studyRevealed, setStudyRevealed] = useState(false);
   const [studyDeck, setStudyDeck] = useState([]);
@@ -288,6 +317,22 @@ export default function App() {
     setNotification(msg);
     clearTimeout(notifTimeout.current);
     notifTimeout.current = setTimeout(() => setNotification(null), 3000);
+  }, []);
+
+  // Persist stepProgress to localStorage
+  useEffect(() => {
+    saveProgress(stepProgress);
+  }, [stepProgress]);
+
+  // Persist wrongAnswers to localStorage
+  useEffect(() => {
+    saveWrongAnswers(wrongAnswers);
+  }, [wrongAnswers]);
+
+  // Helper: record a wrong answer
+  const recordWrong = useCallback((category, answer) => {
+    const key = `${category}:${answer}`;
+    setWrongAnswers(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
   }, []);
 
   // ── BGM toggle ──────────────────────────────────────────────────
@@ -640,6 +685,7 @@ export default function App() {
       }
 
       if (matched) {
+        playSFX("correct");
         setDuelLocal(prev => prev ? { ...prev, feedback: "correct", input: "" } : null);
         setTimeout(() => {
           socket.send(JSON.stringify({ type: "switch_turn" }));
@@ -647,6 +693,8 @@ export default function App() {
           setSpokenText("");
         }, 800);
       } else {
+        playSFX("wrong");
+        recordWrong(duelLocal?.category, q.answer);
         setShake(true);
         setTimeout(() => setShake(false), 400);
         setDuelLocal(prev => prev ? { ...prev, feedback: "wrong" } : null);
@@ -681,6 +729,7 @@ export default function App() {
     const correct = checkSpeechMatch(duelLocal.input, q.answer);
 
     if (correct) {
+      playSFX("correct");
       setDuelLocal(prev => ({ ...prev, feedback: "correct", input: "" }));
       setTimeout(() => {
         socket.send(JSON.stringify({ type: "switch_turn" }));
@@ -688,6 +737,8 @@ export default function App() {
         setTimeout(() => inputRef.current?.focus(), 50);
       }, 600);
     } else {
+      playSFX("wrong");
+      recordWrong(duelLocal?.category, q.answer);
       setShake(true);
       setTimeout(() => setShake(false), 400);
       setDuelLocal(prev => ({ ...prev, input: "", feedback: "wrong" }));
@@ -1111,6 +1162,54 @@ export default function App() {
             6 steps: Flashcard → Cloze → Picture → Sound → Meaning → Spelling
           </p>
 
+          {/* Wrong answers review */}
+          {Object.keys(wrongAnswers).length > 0 && (
+            <details style={{ width: "100%", maxWidth: 500, marginTop: 16 }}>
+              <summary style={{
+                color: "#ff6b81", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600,
+                padding: "8px 0",
+              }}>
+                Wrong answers ({Object.values(wrongAnswers).reduce((a, b) => a + b, 0)} mistakes)
+              </summary>
+              <div style={{
+                background: "rgba(255,71,87,0.06)", border: "1px solid rgba(255,71,87,0.2)",
+                borderRadius: 12, padding: "12px 16px", marginTop: 6,
+                display: "flex", flexDirection: "column", gap: 6,
+              }}>
+                {Object.entries(wrongAnswers)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 20)
+                  .map(([key, count]) => {
+                    const [cat, word] = key.split(":");
+                    const catInfo2 = CATS[cat];
+                    const qItem = QDB[cat]?.find(q2 => q2.answer === word);
+                    return (
+                      <div key={key} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "4px 8px", borderRadius: 8,
+                        background: "rgba(255,255,255,0.03)",
+                      }}>
+                        <span style={{ fontSize: "0.65rem", color: catInfo2?.color || "#fff" }}>{catInfo2?.icon}</span>
+                        <span style={{ color: "white", fontSize: "0.8rem", fontWeight: 600, flex: 1 }}>{word}</span>
+                        {qItem && <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.7rem" }}>{qItem.meaning}</span>}
+                        <span style={{ color: "#ff4757", fontSize: "0.7rem", fontWeight: 700, minWidth: 20, textAlign: "right" }}>x{count}</span>
+                        <button onClick={() => speakWord(word)} style={{
+                          background: "none", border: "none", cursor: "pointer", fontSize: "0.9rem", padding: "2px 4px",
+                        }}>🔊</button>
+                      </div>
+                    );
+                  })}
+                <button onClick={() => { setWrongAnswers({}); }} style={{
+                  ...styles.passBtn, marginTop: 6, padding: "6px 12px",
+                  fontSize: "0.65rem", color: "rgba(255,255,255,0.3)",
+                  alignSelf: "center",
+                }}>
+                  Clear history
+                </button>
+              </div>
+            </details>
+          )}
+
           {/* DUEL button */}
           <button onClick={() => setDuelSetup({ p1: "", p2: "", category: catKeys[0] })}
             style={{
@@ -1404,6 +1503,7 @@ export default function App() {
                     } else {
                       setClozeFeedback(choice.answer);
                       playSFX("wrong");
+                      recordWrong(studyCategory, current.answer);
                       setTimeout(() => {
                         // Move to end of queue
                         setClozeQueue(prev => [...prev.slice(1), prev[0]]);
@@ -1454,6 +1554,7 @@ export default function App() {
 
       const advanceQuiz = (correct) => {
         playSFX(correct ? "correct" : "wrong");
+        if (!correct) recordWrong(studyCategory, current.answer);
         setTimeout(() => {
           if (correct) {
             const next = quizQueue.slice(1);
@@ -1612,6 +1713,7 @@ export default function App() {
                     if (soundFeedback) return;
                     setSoundFeedback(choice.answer);
                     playSFX(isCorrect ? "correct" : "wrong");
+                    if (!isCorrect) recordWrong(studyCategory, current.answer);
                     setTimeout(() => {
                       if (isCorrect) {
                         const next = soundQueue.slice(1);
@@ -1669,6 +1771,7 @@ export default function App() {
         const isCorrect = choice.answer === current.answer;
         setSoundFeedback(choice.answer);
         playSFX(isCorrect ? "correct" : "wrong");
+        if (!isCorrect) recordWrong(studyCategory, current.answer);
         speakWord(choice.answer);
         setTimeout(() => {
           if (isCorrect) {
@@ -1847,6 +1950,7 @@ export default function App() {
               setSoundFeedback(correct ? "correct" : "wrong");
               playSFX(correct ? "correct" : "wrong");
               if (correct) speakWord(current.answer);
+              if (!correct) recordWrong(studyCategory, current.answer);
               setTimeout(() => {
                 if (correct) {
                   const next = soundQueue.slice(1);
@@ -1882,6 +1986,7 @@ export default function App() {
             setSoundFeedback(correct ? "correct" : "wrong");
             playSFX(correct ? "correct" : "wrong");
             if (correct) speakWord(current.answer);
+            if (!correct) recordWrong(studyCategory, current.answer);
             setTimeout(() => {
               if (correct) {
                 const next = soundQueue.slice(1);
