@@ -313,6 +313,10 @@ export default function App() {
   const resultReported = useRef(false);
   const recognitionRef = useRef(null);
 
+  useEffect(() => {
+    if (window.WiseXP) window.WiseXP.init('wise-english-floor');
+  }, []);
+
   const showNotif = useCallback((msg) => {
     setNotification(msg);
     clearTimeout(notifTimeout.current);
@@ -333,6 +337,7 @@ export default function App() {
   const recordWrong = useCallback((category, answer) => {
     const key = `${category}:${answer}`;
     setWrongAnswers(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+    if (window.WiseXP) window.WiseXP.reportWrong({ question: category, correct: answer, playerAnswer: '' });
   }, []);
 
   // ── BGM toggle ──────────────────────────────────────────────────
@@ -502,6 +507,7 @@ export default function App() {
       startStep(cat, step + 1);
     } else {
       setStudyCategory(null);
+      if (window.WiseXP) window.WiseXP.reportGame({ score: 6, correct: 6, total: 6, maxCombo: 0, grade: cat });
     }
   };
 
