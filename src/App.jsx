@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import usePartySocket from "partysocket/react";
 
 // ── QUESTION DATA ──────────────────────────────────────────────────
-const makeQ = (cat, [name, meaning]) => ({ img: `/images/${cat}/${name}.jpg`, answer: name, meaning });
+const makeQ = (cat, [name, meaning]) => ({ img: `/images/${cat}/${name}.webp`, answer: name, meaning });
 const QDB = {
   animals: [["elephant","ゾウ"],["giraffe","キリン"],["penguin","ペンギン"],["lion","ライオン"],["dolphin","イルカ"],["fox","キツネ"],["bear","クマ"],["eagle","ワシ"],["crocodile","ワニ"],["zebra","シマウマ"]].map(e => makeQ("animals", e)),
   food: [["pizza","ピザ"],["sushi","寿司"],["taco","タコス"],["avocado","アボカド"],["noodles","麺"],["steak","ステーキ"],["donut","ドーナツ"],["croissant","クロワッサン"],["waffle","ワッフル"],["blueberry","ブルーベリー"]].map(e => makeQ("food", e)),
