@@ -312,6 +312,7 @@ export default function App() {
   const notifTimeout = useRef(null);
   const timerRef = useRef(null);
   const inputRef = useRef(null);
+  const sessionWrongRef = useRef([]);
   const resultReported = useRef(false);
   const recognitionRef = useRef(null);
 
@@ -339,6 +340,8 @@ export default function App() {
   const recordWrong = useCallback((category, answer) => {
     const key = `${category}:${answer}`;
     setWrongAnswers(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+    sessionWrongRef.current.push({ q: category + ': ' + answer, correct: answer, chosen: '', tag: 'sight_word' });
+    if (sessionWrongRef.current.length > 20) sessionWrongRef.current = sessionWrongRef.current.slice(-20);
     if (window.WiseXP) window.WiseXP.reportWrong({ question: category, correct: answer, playerAnswer: '' });
   }, []);
 
@@ -511,6 +514,13 @@ export default function App() {
     } else {
       setStudyCategory(null);
       if (window.WiseXP) window.WiseXP.reportGame({ score: 6, correct: 6, total: 6, maxCombo: 0, grade: cat });
+      try {
+        window.WiseGame && window.WiseGame.reportComplete({
+          score: 6, maxScore: 6, accuracy: 100,
+          metadata: { category: cat, wrongAnswers: sessionWrongRef.current.slice(-20) }
+        });
+        sessionWrongRef.current = [];
+      } catch(e) {}
     }
   };
 
